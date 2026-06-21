@@ -22,8 +22,8 @@ def build_car(args) -> CarConfig:
     preset = getattr(args, "preset", None)
     if preset == "challenger":
         car = CarConfig.challenger_class()
-    elif preset == "target_133kmh":
-        car = CarConfig.target_133kmh()
+    elif preset == "optimized_regulation":
+        car = CarConfig.optimized_regulation()
     elif preset == "json" and args.car_config:
         car = CarConfig.from_json(args.car_config)
     else:
@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--distance", type=float, default=3022.0, help="Race distance km")
     parser.add_argument("--days", type=int, default=3, help="Race days")
     parser.add_argument("--drive-hours", type=float, default=7.5, help="Effective drive hours per day")
-    parser.add_argument("--preset", choices=["challenger", "target_133kmh"],
+    parser.add_argument("--preset", choices=["challenger", "optimized_regulation"],
                         default="challenger", help="Car preset")
     parser.add_argument("--car-config", type=str, help="Path to JSON car config")
     parser.add_argument("--route", default="flat", help="'flat', 'wsc', or path to CSV")

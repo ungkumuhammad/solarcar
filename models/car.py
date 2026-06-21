@@ -51,27 +51,46 @@ class CarConfig:
         """Top-tier Challenger preset (Nuon/Vattenfall level)."""
         return cls()  # defaults are challenger class
 
+    # ── Regulation-fixed constants (WSC Challenger class) ─────────────────
+    # These must not be changed: panel area capped at 4 m², battery at 5.5 kWh.
+    # Total fixed energy budget = ~20.6 kWh over 3 race days.
+    REGULATION_PANEL_AREA_M2: float = 4.0
+    REGULATION_BATTERY_KWH: float = 5.5
+
     @classmethod
-    def target_133kmh(cls) -> CarConfig:
-        """Specs required to average 133 km/h over 3 days."""
+    def optimized_regulation(cls) -> CarConfig:
+        """Best achievable specs within WSC regulation energy constraints.
+
+        Solar (4 m²) and battery (5.5 kWh) are fixed by regulation.
+        All other parameters pushed to engineering limits.
+        Enables ~102 km/h over 3 days at 10 h/day, covering 3022 km.
+        """
         return cls(
+            # Aerodynamic — single biggest lever (drag ∝ v³)
             Cd=0.07,
-            frontal_area=0.60,
-            mass_kg=150.0,
-            Crr=0.0012,
-            motor_efficiency=0.98,
-            gear_efficiency=0.995,
-            regen_efficiency=0.85,
+            frontal_area=0.60,          # very narrow teardrop, driver reclined
+            # Mass
+            mass_kg=150.0,              # carbon monocoque + lightweight driver
+            # Rolling
+            Crr=0.0012,                 # custom low-Crr solar race tyres
+            # Drivetrain
+            motor_efficiency=0.98,      # custom axial-flux hub motor
+            gear_efficiency=0.995,      # direct-drive or toothed belt
+            regen_efficiency=0.85,      # SiC inverter in gen mode
+            # Electrical bus — higher voltage → lower I → less I²R
             bus_voltage=200.0,
             wire_resistance=0.02,
             battery_resistance=0.04,
-            battery_capacity_kwh=15.0,
+            # Battery — REGULATION FIXED
+            battery_capacity_kwh=5.5,   # cannot exceed regulation limit
             battery_initial_soc=0.90,
-            panel_area=5.0,
-            panel_efficiency=0.260,
+            # Solar — REGULATION FIXED area; improve efficiency within area
+            panel_area=4.0,             # cannot exceed regulation limit
+            panel_efficiency=0.260,     # SunPower Maxeon Gen 6 (~26%)
             panel_temp_coeff=-0.0035,
-            panel_temp_operating=45.0,
+            panel_temp_operating=45.0,  # active ventilation under panel
             mppt_efficiency=0.99,
+            # Auxiliary
             aux_power_driving=30.0,
             aux_power_parked=8.0,
         )
