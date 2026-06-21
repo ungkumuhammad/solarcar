@@ -1,27 +1,46 @@
-# Solar Car Race Simulator — Project Memory
+# CLAUDE.md — Solar Car Project
 
-## Project Purpose
-Python simulator for a WSC/BWSC-style solar race car (Challenger class).
-Models all 10 energy losses to determine race feasibility and required car specs.
+## Role
+
+You are an expert in **energy management** and **racing team engineering** for solar-powered vehicles. Responsibilities span:
+
+- Energy system design (solar harvest, battery sizing, power electronics)
+- Race strategy and energy budgeting
+- Regulatory compliance (BWSC and equivalent events)
+- Vehicle performance modelling (aerodynamics, drivetrain, thermal)
+- Data-driven decision making for competition planning
+
+---
+
+## Project Overview
+
+**Team goal**: Compete in the **Bridgestone World Solar Challenge 2027** (Challenger class) and complete the Darwin → Adelaide race (~3,000 km) in 3–4 days.
+
+This repo contains two bodies of work developed in parallel:
+
+| Body of work | Branch | Purpose |
+|---|---|---|
+| **Race Simulator** | `claude/solar-car-losses-tivgr7` (merged to main) | Python simulator modelling all 10 energy losses, dynamic speed profile, WSC route |
+| **Race Planning & Regulations** | `claude/solar-challenge-2027-plan-nsj4yl` (merged to main) | Official BWSC 2027 regulations, route/irradiance/elevation data, race plan docs |
 
 ---
 
 ## Race Scenario
 
-- **Route:** Darwin → Adelaide, Stuart Highway (3022 km)
+- **Route:** Darwin → Adelaide, Stuart Highway (~3,022 km)
 - **Solar location:** Stuart Highway, Australia (~-23.7° latitude)
 - **Solar model:** sine bell-curve, sunrise 6:30, sunset 18:30, peak 1000 W/m², 6.5 peak-sun-hours/day
 
 ### Regulation Time Window (IMPORTANT — verified)
 | Parameter | Value |
 |---|---|
-| Regulation drive window | **08:00 – 17:00 = 9 h/day** (hard cap) |
-| Typical control stops | 2 stops × 30 min/day = **60 min lost/day** |
+| Regulation drive window | **08:00 – 17:00 = 9 h/day** (hard cap, §3.21.1) |
+| Typical control stops | 2 stops × 30 min/day = **60 min lost/day** (§3.27.8) |
 | **Effective driving/day** | **9 – 1 = 8.0 h/day** |
 
 **10 h/day is NOT achievable** — the regulation window is only 9 h, and control stops reduce effective driving to ~8 h/day.
 
-### Race Duration Feasibility
+### Race Duration Feasibility (simulator results)
 
 | Race days | Effective drive total | Required avg speed | Feasible (regulation energy)? |
 |---|---|---|---|
@@ -33,25 +52,36 @@ Models all 10 energy losses to determine race feasibility and required car specs
 
 ---
 
-## Regulation Constraints (CANNOT be changed — WSC Challenger class)
+## ⚠️ Regulation Discrepancy — Simulator vs BWSC 2027 Official Specs
+
+> The simulator was built with assumed WSC parameters that differ from the official 2027 BWSC regulations. Do not mix these without flagging which source you are using.
+
+| Parameter | Simulator (assumed) | BWSC 2027 Official (§citation) |
+|---|---|---|
+| Solar panel area | 4.0 m² | **6.0 m²** (§2.4.2) |
+| Battery energy | 5.5 kWh (19.8 MJ) | **11 MJ ≈ 3.06 kWh** (§2.5.2) |
+
+The simulator's energy budget and car presets use the assumed values. Any official design work must use the BWSC 2027 values.
+
+### BWSC 2027 Official Constraints (Challenger Class)
+| Parameter | Value | Source |
+|---|---|---|
+| Solar area limit | **6 m²** | §2.4.2 |
+| Battery energy limit | **11 MJ (~3.06 kWh)** | §2.5.2 |
+| Cell type (team spec) | Li-ion 18650 — 3.7 V, 3.4 Ah, ~45 g/cell | Team spec |
+| Max cells (11 MJ) | **242 cells → ~10.9 kg pack** | Derived from §2.5.2 |
+| Daily driving window | **08:00 – 17:00** | §3.21.1 |
+| Control stop duration | **30 min per stop** | §3.27.8 |
+
+### Simulator Assumed Constraints (used in Python code)
 | Parameter | Fixed Value |
 |---|---|
-| Solar panel area | **4.0 m²** (hard cap) |
-| Battery capacity | **5.5 kWh** (hard cap) |
-
-### Fixed Energy Budget (3 race days of solar + battery)
-- Solar per day: 4.0 × η_panel × 6.5 PSH × temp_derating × MPPT
-- Baseline solar (3 days): **~16.2 kWh** (24.5% eff, 55°C operating)
-- Optimized solar (3 days): **~17.3 kWh** (26.0% eff, 45°C operating)
-- Battery usable (80% SOC): **4.4 kWh**
-- **Total fixed budget: ~20–22 kWh** regardless of race duration
-
-Energy budget expands with more days (more solar days harvested):
-- 4 days: ~23–25 kWh total → feasible at 94.4 km/h with optimized car
+| Solar panel area | **4.0 m²** (hard cap in simulator) |
+| Battery capacity | **5.5 kWh** (hard cap in simulator) |
 
 ---
 
-## All 10 Loss Categories & Models
+## All 10 Loss Categories & Models (Simulator)
 
 ### 1. Aerodynamic Drag — DOMINANT (72–82% of energy at race speed)
 ```
@@ -114,7 +144,6 @@ P_panel = area × η_panel × irradiance × f_temp
 ```
 - Default: T_op=55°C → f_temp=0.867 (11.4% loss)
 - Target: T_op=45°C → f_temp=0.924 (7.6% loss via active ventilation)
-- REGULATION LOCKED: area=4.0 m² max
 - File: `losses/solar.py` → `solar_panel_power()`
 
 ### 8. MPPT Losses
@@ -151,10 +180,10 @@ File: `losses/auxiliary.py` → `auxiliary_power()`
 
 | Preset | Cd | A (m²) | m (kg) | Crr | Panel eff | Solar m² | Battery kWh |
 |---|---|---|---|---|---|---|---|
-| `challenger_class()` | 0.09 | 0.96 | 180 | 0.0015 | 24.5% | **4.0 (reg)** | **5.5 (reg)** |
-| `optimized_regulation()` | 0.07 | 0.60 | 150 | 0.0012 | 26.0% | **4.0 (reg)** | **5.5 (reg)** |
+| `challenger_class()` | 0.09 | 0.96 | 180 | 0.0015 | 24.5% | **4.0 (sim)** | **5.5 (sim)** |
+| `optimized_regulation()` | 0.07 | 0.60 | 150 | 0.0012 | 26.0% | **4.0 (sim)** | **5.5 (sim)** |
 
-**`optimized_regulation()` is the correct target preset.**
+**`optimized_regulation()` is the correct target preset for the simulator.**
 Finishes 3022 km in **4 days** (8h/day effective) at avg **111.9 km/h**, 16.3% battery remaining.
 
 ### Required Spec Changes (baseline → optimized_regulation)
@@ -246,10 +275,21 @@ solarcar/
 │   ├── solar_model.py           ← SolarModel (irradiance bell curve, PSH)
 │   ├── atmosphere.py            ← air_density(altitude, temp)
 │   └── route.py                 ← RouteSegment, RouteProfile (flat / wsc / csv)
-└── simulation/
-    ├── speed_strategy.py        ← SpeedStrategy (dynamic speed per timestep)
-    ├── simulator.py             ← RaceSimulator.run() (main time-step loop)
-    └── energy_budget.py         ← EnergyBudget (result aggregation + print_summary)
+├── simulation/
+│   ├── speed_strategy.py        ← SpeedStrategy (dynamic speed per timestep)
+│   ├── simulator.py             ← RaceSimulator.run() (main time-step loop)
+│   └── energy_budget.py         ← EnergyBudget (result aggregation + print_summary)
+├── docs/
+│   ├── race-plan.md             ← High-level 3-day race plan and speed analysis
+│   └── session-memory.md        ← Persistent session memory log (read at session start)
+├── regulations/
+│   ├── bwsc-2027-regulations.md ← Full official BWSC 2027 regulations (PDF→Markdown)
+│   ├── key-rules-summary.md     ← Quick-reference table of race-critical rules
+│   └── README.md                ← Instructions for converting official PDF via markitdown
+└── data/
+    ├── route.csv                ← 11 checkpoints Darwin→Adelaide with coordinates
+    ├── irradiance/              ← NASA POWER irradiance data 2022–2024 at 11 checkpoints
+    └── elevation/               ← 58-point elevation profile Darwin→Adelaide
 ```
 
 ## How to Run
@@ -302,14 +342,87 @@ Loss breakdown:    drag 72.3%, rolling 9.0%, aux 9.2%, drivetrain 4.5%
 
 ---
 
+## Working Principles
+
+### 1. Always wait for the next instruction
+Do not proceed to the next planning phase or make assumptions about what comes next. Complete the requested task, then **stop and wait**.
+
+### 2. Never fabricate numbers or data
+Every numerical value must have a cited source (regulation section, datasheet, published data, or team measurement). Use `[SOURCE NEEDED]` for unknowns.
+
+### 3. Flag discrepancies immediately
+If a user-provided value conflicts with official regulations or a cited source, flag it before using it in any calculation.
+
+### 4. Distinguish estimates from facts
+- **Confirmed**: from a cited source
+- **Estimated / approximate**: engineering approximation with stated basis
+- **Pending**: needs official data not yet available
+
+### 5. Regulation compliance first
+All design and strategy decisions must be checked against the BWSC 2027 Event Regulations. Reference the section number in every compliance statement.
+
+---
+
+## Current Project Status
+
+| Phase | Status |
+|---|---|
+| Python race simulator (all 10 losses) | **Complete** — verified results in main |
+| High-level race plan | **Complete** (`docs/race-plan.md`) |
+| Official BWSC 2027 regulations | **Complete** (`regulations/bwsc-2027-regulations.md`) |
+| Key rules summary | **Complete** (`regulations/key-rules-summary.md`) |
+| Route data | **Approximate** — pending official BWSC 2027 route notes |
+| Irradiance data | **Complete** (`data/irradiance/`) |
+| Elevation data | **Complete** (`data/elevation/`) |
+| Simulator updated for BWSC 2027 official specs | **Not started** — solar area/battery differ from official |
+| Solar power budget | Not started |
+| Battery design | Not started |
+| Energy balance | Not started |
+| Strategy model | Not started |
+
+---
+
+## Session Memory
+
+Memory file: `docs/session-memory.md`
+
+**Read `docs/session-memory.md` at the start of every session before doing any work.**
+
+### compress command
+
+When the user says "compress" (or "compress this session"):
+
+1. Summarise the current session into a new dated entry:
+   ```
+   ## YYYY-MM-DD — <one-line headline>
+   ### Accomplished
+   ### Key Decisions / Findings
+   ### Files Created / Modified
+   ### Project Status
+   ### Next Steps (waiting for instruction)
+   ```
+2. Prepend the new entry at the top of `docs/session-memory.md`, immediately below the file header.
+3. Commit: `chore: compress session YYYY-MM-DD`
+4. Push to the current branch.
+5. Confirm to the user that memory has been saved.
+
+---
+
 ## Session History
 
-### Session 1 (2026-06-21)
+### Session 1 (2026-06-21) — Race Planning & Regulations
+- Added BWSC 2027 official race plan, regulations (PDF→Markdown), route data
+- Fetched irradiance (NASA POWER, 2022–2024) and elevation data (AWS tiles)
+- Added session memory system (`docs/session-memory.md`)
+- Key finding: BWSC 2027 limits are 6 m² solar and 11 MJ battery (different from simulator assumptions)
+- Branch: `claude/solar-challenge-2027-plan-nsj4yl`
+
+### Session 1 (2026-06-21) — Simulator Build
 - Built full simulator from scratch: all 10 loss models, dynamic speed profile, WSC route
-- Key corrections made during session:
-  - Regulation-fixed: solar 4.0 m² and battery 5.5 kWh (CANNOT be changed, WSC rules)
+- Key corrections:
+  - Regulation-fixed (simulator): solar 4.0 m² and battery 5.5 kWh
   - Drive window is 08:00–17:00 = 9h, NOT 10h; minus 2×30min stops = **8h effective**
-  - 3-day finish is IMPOSSIBLE under regulation energy (~111 km/h max; needs 125.9 km/h)
+  - 3-day finish is IMPOSSIBLE under assumed regulation energy (~111 km/h max; needs 125.9 km/h)
   - **4-day race at 94.4 km/h is the correct feasible target**
   - Removed `target_133kmh` preset (violated regulation limits)
 - Branch: `claude/solar-car-losses-tivgr7`
@@ -318,10 +431,11 @@ Loss breakdown:    drag 72.3%, rolling 9.0%, aux 9.2%, drivetrain 4.5%
 ---
 
 ## What to Build Next (suggested)
-1. **Matplotlib plots** — speed profile, SoC trace, power breakdown per day
-2. **CSV export** — time-series trace for external analysis
-3. **Sensitivity analysis** — rank which parameter has most impact on finish time
-4. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound)
-5. **Cloud/weather model** — stochastic irradiance variation day-to-day
-6. **Race strategy optimizer** — find optimal speed per segment to minimize total time
-7. **Web dashboard** — interactive sliders for real-time car parameter exploration
+1. **Reconcile simulator with BWSC 2027 official specs** — update solar area (4→6 m²) and battery (5.5→3.06 kWh) and re-run feasibility
+2. **Matplotlib plots** — speed profile, SoC trace, power breakdown per day
+3. **CSV export** — time-series trace for external analysis
+4. **Sensitivity analysis** — rank which parameter has most impact on finish time
+5. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound)
+6. **Cloud/weather model** — stochastic irradiance variation day-to-day
+7. **Race strategy optimizer** — find optimal speed per segment to minimize total time
+8. **Web dashboard** — interactive sliders for real-time car parameter exploration

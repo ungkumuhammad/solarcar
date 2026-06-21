@@ -1,0 +1,12 @@
+stop_number,location,territory,segment_km,cumulative_km,latitude,longitude,control_stop,speed_limit_kmh
+0,Darwin,NT,0,0,-12.4634,130.8456,FALSE,130
+1,Katherine,NT,310,310,-14.4652,132.2635,TRUE,130
+2,Daly Waters,NT,270,580,-16.2647,133.3820,TRUE,130
+3,Tennant Creek,NT,270,850,-19.6524,134.1910,TRUE,130
+4,Barrow Creek,NT,270,1120,-21.5437,133.8878,TRUE,130
+5,Alice Springs,NT,280,1400,-23.6980,133.8807,TRUE,130
+6,Kulgera,NT,270,1670,-25.8384,133.2946,TRUE,130
+7,Coober Pedy,SA,370,2040,-29.0135,134.7544,TRUE,110
+8,Glendambo,SA,250,2290,-30.9677,135.7503,TRUE,110
+9,Port Augusta,SA,260,2550,-32.4930,137.7662,TRUE,110
+10,Adelaide,SA,472,3022,-34.9285,138.6007,FALSE,110
