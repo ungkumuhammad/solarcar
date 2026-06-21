@@ -5,6 +5,53 @@
 
 ---
 
+## 2026-06-21 — Speed-profile visualization + location-based control stops
+
+### Accomplished
+- Added matplotlib visualization: `--plot` produces `output/dashboard.png` (5 panels:
+  speed, SoC, stacked power breakdown, elevation, irradiance over elapsed race time)
+  and `output/power_by_day.png` (stacked energy-Wh bar per race day).
+- Added `--table` (one row per ≥5 km/h speed change, + day starts, control stops, finish)
+  and `--csv` (exports `speed_table.csv` + full per-timestep `full_trace.csv`).
+- Extended `EnergyBudget` with aligned per-timestep traces (distance, day, irradiance,
+  grade, altitude, driving/control-stop flags, and per-loss power) recorded for BOTH
+  driving and parked/charging daylight steps — so evening/morning solar charging and
+  cross-day SoC carryover are visible.
+- **Model change — control stops are now location-based** (user-requested): a 30-min halt
+  is taken when the car reaches each of the 9 official checkpoint km
+  (310/580/850/1120/1400/1670/2040/2290/2550 from `data/route.csv`), car keeps charging
+  from solar during the halt, and driving runs to the real **17:00 hard stop** (retired
+  the old "end day 1 h early / 2 stops per day" abstraction).
+
+### Key Decisions / Findings
+- New results (location-based stops): optimized 4-day **finishes 3022 km, 66.4% SoC**
+  (was 73.3%); 3-day now **2804 km / 92.8% (DNF)** because all 9 stops = 4.5 h apply
+  regardless of race length; baseline 4-day **2925 km, 16.4% SoC (DNF)**.
+- `RaceConfig`: `control_stops_per_day` → `num_control_stops` (default 9);
+  `drive_end_hour` now returns the real 17:00; `total_drive_hours = 9h×days − 4.5h`.
+- Confirmed three current modeling caveats the charts faithfully show (not fixed this
+  session): regen is capped at zero (no surplus to battery, `simulator.py`), battery
+  strategy is greedy per-day, irradiance is time-based not location-based.
+- matplotlib/numpy installed via new `requirements.txt`; `output/` is git-ignored.
+
+### Files Created / Modified
+- New: `simulation/plots.py`, `simulation/tables.py`, `requirements.txt`
+- Modified: `simulation/energy_budget.py` (traces + `record_step`), `simulation/simulator.py`
+  (location-based stops, full trace recording), `models/race.py` (stop accounting),
+  `environment/route.py` (`load_control_stops_km`, `OFFICIAL_CONTROL_STOPS_KM`),
+  `main.py` (CLI flags + control-stop wiring), `.gitignore`, `CLAUDE.md` (results updated)
+
+### Project Status
+- Visualization (plots + table + CSV): **Complete**
+- Control-stop model: **upgraded to location-based**
+
+### Next Steps (waiting for instruction)
+- **Whole-race battery strategy** (user-selected next): make speed planning ensure charge
+  lasts to Adelaide, not just end of day (replaces greedy per-day budget).
+- Optional follow-ups: regen→battery charging, location-based irradiance.
+
+---
+
 ## 2026-06-21 — Data scripts and environmental datasets
 
 ### Accomplished

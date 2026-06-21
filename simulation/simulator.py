@@ -42,11 +42,16 @@ class RaceSimulator:
         race: RaceConfig,
         route: Optional[RouteProfile] = None,
         fixed_speed_kmh: Optional[float] = None,
+        control_stops_km: Optional[list] = None,
     ):
         self.car = car
         self.race = race
         self.route = route or RouteProfile.flat(race.distance_km)
         self.fixed_speed = fixed_speed_kmh
+        # Control-stop checkpoint positions (cumulative km), sorted ascending.
+        from environment.route import OFFICIAL_CONTROL_STOPS_KM
+        stops = control_stops_km if control_stops_km is not None else list(OFFICIAL_CONTROL_STOPS_KM)
+        self.control_stops_km = sorted(s for s in stops if s < race.distance_km)
         self.solar = SolarModel(
             sunrise_hour=race.sunrise_hour,
             sunset_hour=race.sunset_hour,
@@ -70,6 +75,13 @@ class RaceSimulator:
         distance_km = 0.0
         day_summaries = []
 
+        # Location-based control stops: a halt is served when the car reaches each
+        # checkpoint km. stop_remaining_min counts down the halt and can carry across
+        # the 17:00 boundary to the next morning.
+        next_stop_idx = 0
+        stop_remaining_min = 0.0
+        dt_min = race.time_step_min
+
         for day in range(race.race_days):
             day_start_dist = distance_km
             if verbose:
@@ -78,11 +90,7 @@ class RaceSimulator:
             hour = 0.0
             while hour < 24.0:
                 abs_hour = hour
-                is_driving = (
-                    race.drive_start_hour <= abs_hour < race.drive_end_hour
-                    and battery_kwh > bat_min_kwh
-                    and distance_km < race.distance_km
-                )
+                soc = battery_kwh / car.battery_capacity_kwh
 
                 irr = self.solar.irradiance(abs_hour)
                 P_solar = solar_panel_power(
@@ -95,8 +103,27 @@ class RaceSimulator:
                     car.mppt_efficiency,
                 )
 
+                in_window = race.drive_start_hour <= abs_hour < race.drive_end_hour
+                grade_pct, alt_m = self.route.grade_at_distance(distance_km)
+
+                # Begin a control-stop halt if we've reached the next checkpoint.
+                at_checkpoint = (
+                    next_stop_idx < len(self.control_stops_km)
+                    and distance_km >= self.control_stops_km[next_stop_idx] - 1e-6
+                    and distance_km < race.distance_km
+                )
+                if in_window and at_checkpoint and stop_remaining_min <= 0:
+                    stop_remaining_min = race.control_stop_duration_min
+
+                serving_stop = in_window and stop_remaining_min > 0
+                is_driving = (
+                    in_window
+                    and not serving_stop
+                    and battery_kwh > bat_min_kwh
+                    and distance_km < race.distance_km
+                )
+
                 if is_driving:
-                    grade_pct, alt_m = self.route.grade_at_distance(distance_km)
                     rho = air_density(alt_m, race.ambient_temp_c)
                     hours_left_today = race.drive_end_hour - abs_hour
 
@@ -105,7 +132,7 @@ class RaceSimulator:
                     else:
                         speed_kmh = self.strategy.compute_speed(
                             solar_power_w=P_solar,
-                            battery_soc=battery_kwh / car.battery_capacity_kwh,
+                            battery_soc=soc,
                             grade_percent=grade_pct,
                             altitude_m=alt_m,
                             hours_remaining_today=max(0.01, hours_left_today),
@@ -142,26 +169,46 @@ class RaceSimulator:
                     distance_km = min(race.distance_km, distance_km + dist_step)
                     budget.total_driving_hours += self.dt_h
 
-                    # Traces (record every step while driving)
-                    budget.time_trace.append(round(day + abs_hour / 24, 4))
-                    budget.speed_trace.append(round(speed_kmh, 2))
-                    budget.soc_trace.append(round(battery_kwh / car.battery_capacity_kwh, 4))
-                    budget.solar_trace.append(round(P_solar, 1))
-                    budget.demand_trace.append(round(P_demand, 1))
+                    soc = battery_kwh / car.battery_capacity_kwh
+                    budget.record_step(
+                        time=day + abs_hour / 24, day=day + 1, distance_km=distance_km,
+                        speed_kmh=speed_kmh, soc=soc, solar_w=P_solar, demand_w=P_demand,
+                        irradiance=irr, grade_pct=grade_pct, altitude_m=alt_m,
+                        driving=True, control_stop=False,
+                        drag_w=P_drag, rolling_w=P_roll, gradient_w=P_grade_net,
+                        drivetrain_w=P_drive_loss, aux_w=P_aux, electrical_w=P_wire + P_bat_int,
+                    )
 
                     if verbose and irr > 50:
-                        soc_pct = battery_kwh / car.battery_capacity_kwh * 100
                         print(f"  {abs_hour:4.1f}h  irr={irr:>5.0f}W/m²  solar={P_solar:>4.0f}W  "
                               f"spd={speed_kmh:>5.1f}km/h  grade={grade_pct:+.1f}%  "
-                              f"demand={P_demand:>5.0f}W  SoC={soc_pct:.0f}%  dist={distance_km:.0f}km")
+                              f"demand={P_demand:>5.0f}W  SoC={soc*100:.0f}%  dist={distance_km:.0f}km")
 
                 else:
-                    # Parked: only trickle aux draw, solar still charges
+                    # Stationary: control-stop halt OR parked outside the drive window.
+                    # Either way the car still charges from solar and draws parked aux.
                     P_aux_park = auxiliary_power(False, car.aux_power_driving, car.aux_power_parked)
                     net_w = P_solar - P_aux_park
                     delta_kwh = net_w * self.dt_h / 1000.0
                     battery_kwh = max(0.0, min(car.battery_capacity_kwh, battery_kwh + delta_kwh))
                     budget.auxiliary_wh += P_aux_park * self.dt_h
+
+                    if serving_stop:
+                        stop_remaining_min -= dt_min
+                        if stop_remaining_min <= 0:
+                            next_stop_idx += 1
+
+                    # Record stationary daylight steps (charging) and all control stops;
+                    # skip pure-night steps (irr == 0, not a stop) to keep traces compact.
+                    if serving_stop or irr > 0:
+                        soc = battery_kwh / car.battery_capacity_kwh
+                        budget.record_step(
+                            time=day + abs_hour / 24, day=day + 1, distance_km=distance_km,
+                            speed_kmh=0.0, soc=soc, solar_w=P_solar, demand_w=P_aux_park,
+                            irradiance=irr, grade_pct=grade_pct, altitude_m=alt_m,
+                            driving=False, control_stop=bool(serving_stop),
+                            aux_w=P_aux_park,
+                        )
 
                 budget.solar_harvested_wh += P_solar * self.dt_h
 
@@ -192,6 +239,7 @@ class RaceSimulator:
         """Run simulation for each fixed speed. Returns list of EnergyBudget."""
         results = []
         for spd in speeds_kmh:
-            sim = RaceSimulator(self.car, self.race, self.route, fixed_speed_kmh=spd)
+            sim = RaceSimulator(self.car, self.race, self.route, fixed_speed_kmh=spd,
+                                control_stops_km=self.control_stops_km)
             results.append((spd, sim.run()))
         return results

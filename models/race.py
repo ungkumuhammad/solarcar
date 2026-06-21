@@ -11,9 +11,11 @@ class RaceConfig:
     regulation_window_start: float = 8.0   # 08:00
     regulation_window_end: float = 17.0   # 17:00  → 9.0 h window
 
-    # Control stops: mandatory halts at checkpoints (reduces effective drive time)
-    control_stops_per_day: int = 2
-    control_stop_duration_min: float = 30.0   # minutes per stop
+    # Control stops: mandatory halts taken at fixed checkpoint locations (by km).
+    # They consume clock time WHERE they occur (not deducted from the end of the day);
+    # the car is stationary but still charges from solar during a halt.
+    num_control_stops: int = 9                # official BWSC stops Katherine..Port Augusta
+    control_stop_duration_min: float = 30.0   # minutes per stop (§3.27.8)
 
     time_step_min: float = 30.0     # simulation timestep in minutes
     latitude: float = -23.7         # Stuart Highway midpoint (Australia)
@@ -31,13 +33,9 @@ class RaceConfig:
         return self.regulation_window_end - self.regulation_window_start
 
     @property
-    def control_stop_hours_per_day(self) -> float:
-        return self.control_stops_per_day * self.control_stop_duration_min / 60.0
-
-    @property
-    def drive_hours_per_day(self) -> float:
-        """Effective driving time per day after subtracting control stops."""
-        return self.regulation_window_h - self.control_stop_hours_per_day
+    def total_control_stop_hours(self) -> float:
+        """Total clock time lost to control stops across the whole race."""
+        return self.num_control_stops * self.control_stop_duration_min / 60.0
 
     @property
     def drive_start_hour(self) -> float:
@@ -45,12 +43,19 @@ class RaceConfig:
 
     @property
     def drive_end_hour(self) -> float:
-        """Effective drive end = start + effective hours (stops already subtracted)."""
-        return self.regulation_window_start + self.drive_hours_per_day
+        """Real hard stop time each day (17:00). Control stops are taken at their
+        checkpoint locations during the window, not deducted from the end."""
+        return self.regulation_window_end
+
+    @property
+    def window_hours_per_day(self) -> float:
+        """Permitted drive window per day (08:00–17:00 = 9 h)."""
+        return self.regulation_window_h
 
     @property
     def total_drive_hours(self) -> float:
-        return self.drive_hours_per_day * self.race_days
+        """Effective moving time over the race = total window minus all control stops."""
+        return self.regulation_window_h * self.race_days - self.total_control_stop_hours
 
     def required_avg_speed(self) -> float:
         """Speed needed to cover full distance within effective driving time."""

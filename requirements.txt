@@ -1,0 +1,4 @@
+# Solar Car Race Simulator dependencies
+# Core simulation uses only the Python standard library.
+# matplotlib (pulls in numpy) is required for the --plot visualisations.
+matplotlib>=3.7

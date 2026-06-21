@@ -5,6 +5,27 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 
+# Official BWSC control-stop locations (cumulative km from Darwin), from data/route.csv
+# rows flagged control_stop=TRUE: Katherine .. Port Augusta.
+OFFICIAL_CONTROL_STOPS_KM = [310, 580, 850, 1120, 1400, 1670, 2040, 2290, 2550]
+
+
+def load_control_stops_km(csv_path: str) -> List[float]:
+    """Read cumulative-km of control stops from a route CSV.
+
+    Expects columns ``cumulative_km`` and ``control_stop`` (TRUE/FALSE). Falls back
+    to the official BWSC stop list if the file lacks those columns.
+    """
+    stops: List[float] = []
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            flag = str(row.get("control_stop", "")).strip().upper()
+            if flag in ("TRUE", "1", "YES") and "cumulative_km" in row:
+                stops.append(float(row["cumulative_km"]))
+    return stops or list(OFFICIAL_CONTROL_STOPS_KM)
+
+
 @dataclass
 class RouteSegment:
     distance_km: float
