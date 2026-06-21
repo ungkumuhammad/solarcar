@@ -40,15 +40,15 @@ This repo contains two bodies of work developed in parallel:
 
 **10 h/day is NOT achievable** — the regulation window is only 9 h, and control stops reduce effective driving to ~8 h/day.
 
-### Race Duration Feasibility (simulator results)
+### Race Duration Feasibility (simulator results — BWSC 2027 official specs)
 
-| Race days | Effective drive total | Required avg speed | Feasible (regulation energy)? |
+| Race days | Effective drive total | Required avg speed | Feasible? |
 |---|---|---|---|
-| 3 days | 24 h | 125.9 km/h | **NO** — energy cap is ~111 km/h max |
-| **4 days** | **32 h** | **94.4 km/h** | **YES** — optimized car finishes with 16% SOC |
-| 5 days | 40 h | 75.5 km/h | YES — baseline car can also finish |
+| 3 days | 24 h | 125.9 km/h | **NO** — optimized car covers 3007.7 km (99.5%), 14 km short |
+| **4 days** | **32 h** | **94.4 km/h** | **YES** — optimized car finishes in 24.5 h at 123.3 km/h, 73.3% SOC remaining |
+| 5 days | 40 h | 75.5 km/h | YES |
 
-**Correct race target: 4 days, 8 h/day effective, 94.4 km/h required.**
+**Race target: 4 days minimum. Optimized car completes the race in ~3.1 days effective drive time, arriving on Day 4 with large energy surplus.**
 
 ---
 
@@ -73,11 +73,11 @@ The simulator's energy budget and car presets use the assumed values. Any offici
 | Daily driving window | **08:00 – 17:00** | §3.21.1 |
 | Control stop duration | **30 min per stop** | §3.27.8 |
 
-### Simulator Assumed Constraints (used in Python code)
-| Parameter | Fixed Value |
+### Simulator Values (now updated to match BWSC 2027 official specs)
+| Parameter | Value |
 |---|---|
-| Solar panel area | **4.0 m²** (hard cap in simulator) |
-| Battery capacity | **5.5 kWh** (hard cap in simulator) |
+| Solar panel area | **6.0 m²** (§2.4.2) |
+| Battery capacity | **3.056 kWh** (11 MJ ÷ 3.6, §2.5.2) |
 
 ---
 
@@ -180,11 +180,11 @@ File: `losses/auxiliary.py` → `auxiliary_power()`
 
 | Preset | Cd | A (m²) | m (kg) | Crr | Panel eff | Solar m² | Battery kWh |
 |---|---|---|---|---|---|---|---|
-| `challenger_class()` | 0.09 | 0.96 | 180 | 0.0015 | 24.5% | **4.0 (sim)** | **5.5 (sim)** |
-| `optimized_regulation()` | 0.07 | 0.60 | 150 | 0.0012 | 26.0% | **4.0 (sim)** | **5.5 (sim)** |
+| `challenger_class()` | 0.09 | 0.96 | 180 | 0.0015 | 24.5% | **6.0 (§2.4.2)** | **3.056 (§2.5.2)** |
+| `optimized_regulation()` | 0.07 | 0.60 | 150 | 0.0012 | 26.0% | **6.0 (§2.4.2)** | **3.056 (§2.5.2)** |
 
 **`optimized_regulation()` is the correct target preset for the simulator.**
-Finishes 3022 km in **4 days** (8h/day effective) at avg **111.9 km/h**, 16.3% battery remaining.
+Finishes 3022 km in **4 days** (24.5 h effective drive) at avg **123.3 km/h**, 73.3% battery remaining.
 
 ### Required Spec Changes (baseline → optimized_regulation)
 | Loss | Baseline | Required | Improvement |
@@ -228,15 +228,19 @@ speed = clip(speed, v_min=40, v_max=130)
 
 ## Key Simulation Results
 
-### Baseline Challenger — 4-day race, WSC route
-- Solar-neutral speed: **84.7 km/h**
-- Covers **2601 km** (86% of race) — **does NOT finish**
-- Avg speed: 81.3 km/h, Loss: drag 72%, rolling 9%, aux 9%, drivetrain 4.5%
+### Baseline Challenger — 4-day race, WSC route (BWSC 2027 official specs)
+- Covers **2945.0 km** (97.5% of race) — **does NOT finish** (25 km short)
+- Avg speed: 92.0 km/h, Final SoC: 33.4%
+- Loss: drag 76.5%, rolling 7.7%, aux 6.8%, drivetrain 4.6%
 
-### Optimized Regulation — 4-day race, WSC route ✓
-- **Finishes 3022 km**, driving time 27h, avg **111.9 km/h**
-- Final battery SoC: 16.3%
-- Loss: drag 82%, rolling 8%, aux 5%, drivetrain 2.4%
+### Optimized Regulation — 4-day race, WSC route ✓ (BWSC 2027 official specs)
+- **Finishes 3022 km**, effective driving time **24.5 h** (completes on Day 4 well ahead of schedule)
+- Avg speed: **123.3 km/h**, Final battery SoC: **73.3%**
+- Loss: drag 83.0%, rolling 6.8%, aux 4.0%, drivetrain 2.4%
+
+### Optimized Regulation — 3-day race, WSC route (for reference)
+- Covers **3007.7 km** (99.5%) — **just misses finish by 14.3 km**
+- Avg speed: 125.3 km/h, Final SoC: 75.5%
 
 ---
 
@@ -318,26 +322,34 @@ python main.py --cd 0.07 --mass 155 --route wsc
 
 ---
 
-## Verified Simulation Output (2026-06-21)
+## Verified Simulation Output (2026-06-21, BWSC 2027 official specs: 6 m² solar, 3.056 kWh battery)
 
 ### `python main.py --preset optimized_regulation --route wsc`
 ```
 Distance covered:  3022.0 km  ← FINISHES
-Driving time:        27.0 h
-Average speed:      111.9 km/h
-Final battery SoC:   16.3%
-Energy in:         24835.5 Wh  (solar 20781 + battery 4054)
-Loss breakdown:    drag 81.8%, rolling 7.9%, aux 5.1%, drivetrain 2.4%
+Driving time:        24.5 h
+Average speed:      123.3 km/h
+Final battery SoC:   73.3%
+Energy in:         29572.6 Wh  (solar 29063 + battery 509)
+Loss breakdown:    drag 83.0%, rolling 6.8%, aux 4.0%, drivetrain 2.4%
+```
+
+### `python main.py --preset optimized_regulation --route wsc --days 3`
+```
+Distance covered:  3007.7 km  ← DOES NOT FINISH (99.5%, 14 km short)
+Driving time:        24.0 h
+Average speed:      125.3 km/h
+Final battery SoC:   75.5%
 ```
 
 ### `python main.py --route wsc`  (baseline challenger)
 ```
-Distance covered:  2601.1 km  ← DOES NOT FINISH (86%)
+Distance covered:  2945.0 km  ← DOES NOT FINISH (97.5%)
 Driving time:        32.0 h
-Average speed:       81.3 km/h
-Final battery SoC:   18.2%
-Energy in:         26122.9 Wh  (solar 22722 + battery 3401)
-Loss breakdown:    drag 72.3%, rolling 9.0%, aux 9.2%, drivetrain 4.5%
+Average speed:       92.0 km/h
+Final battery SoC:   33.4%
+Energy in:         35508.5 Wh  (solar 34083 + battery 1425)
+Loss breakdown:    drag 76.5%, rolling 7.7%, aux 6.8%, drivetrain 4.6%
 ```
 
 ---
@@ -374,7 +386,7 @@ All design and strategy decisions must be checked against the BWSC 2027 Event Re
 | Route data | **Approximate** — pending official BWSC 2027 route notes |
 | Irradiance data | **Complete** (`data/irradiance/`) |
 | Elevation data | **Complete** (`data/elevation/`) |
-| Simulator updated for BWSC 2027 official specs | **Not started** — solar area/battery differ from official |
+| Simulator updated for BWSC 2027 official specs | **Complete** — 6 m² solar (§2.4.2), 3.056 kWh battery (§2.5.2) |
 | Solar power budget | Not started |
 | Battery design | Not started |
 | Energy balance | Not started |
@@ -431,11 +443,10 @@ When the user says "compress" (or "compress this session"):
 ---
 
 ## What to Build Next (suggested)
-1. **Reconcile simulator with BWSC 2027 official specs** — update solar area (4→6 m²) and battery (5.5→3.06 kWh) and re-run feasibility
-2. **Matplotlib plots** — speed profile, SoC trace, power breakdown per day
-3. **CSV export** — time-series trace for external analysis
-4. **Sensitivity analysis** — rank which parameter has most impact on finish time
-5. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound)
-6. **Cloud/weather model** — stochastic irradiance variation day-to-day
-7. **Race strategy optimizer** — find optimal speed per segment to minimize total time
-8. **Web dashboard** — interactive sliders for real-time car parameter exploration
+1. **Matplotlib plots** — speed profile, SoC trace, power breakdown per day
+2. **CSV export** — time-series trace for external analysis
+3. **Sensitivity analysis** — rank which parameter has most impact on finish time
+4. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound)
+5. **Cloud/weather model** — stochastic irradiance variation day-to-day
+6. **Race strategy optimizer** — find optimal speed per segment to minimize total time
+7. **Web dashboard** — interactive sliders for real-time car parameter exploration

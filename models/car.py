@@ -26,14 +26,14 @@ class CarConfig:
     wire_resistance: float = 0.04   # Ω total harness
     battery_resistance: float = 0.08  # Ω internal
 
-    # Battery
-    battery_capacity_kwh: float = 5.5
+    # Battery — BWSC 2027 §2.5.2: max 11 MJ = 3.056 kWh
+    battery_capacity_kwh: float = 3.056
     battery_initial_soc: float = 0.80   # fraction 0-1
     battery_soc_min: float = 0.10       # reserve, never go below
     battery_soc_max: float = 1.00
 
-    # Solar panels
-    panel_area: float = 4.0             # m²
+    # Solar panels — BWSC 2027 §2.4.2: max 6.0 m²
+    panel_area: float = 6.0             # m²
     panel_efficiency: float = 0.245     # STC efficiency
     panel_temp_coeff: float = -0.0038   # per °C (negative for c-Si)
     panel_temp_stc: float = 25.0        # °C STC reference
@@ -51,19 +51,18 @@ class CarConfig:
         """Top-tier Challenger preset (Nuon/Vattenfall level)."""
         return cls()  # defaults are challenger class
 
-    # ── Regulation-fixed constants (WSC Challenger class) ─────────────────
-    # These must not be changed: panel area capped at 4 m², battery at 5.5 kWh.
-    # Total fixed energy budget = ~20.6 kWh over 3 race days.
-    REGULATION_PANEL_AREA_M2: float = 4.0
-    REGULATION_BATTERY_KWH: float = 5.5
+    # ── BWSC 2027 regulation hard limits (Challenger class) ───────────────
+    # §2.4.2: solar array ≤ 6.0 m²
+    # §2.5.2: battery energy ≤ 11 MJ = 3.056 kWh
+    REGULATION_PANEL_AREA_M2: float = 6.0
+    REGULATION_BATTERY_KWH: float = 3.056
 
     @classmethod
     def optimized_regulation(cls) -> CarConfig:
-        """Best achievable specs within WSC regulation energy constraints.
+        """Best achievable specs within BWSC 2027 regulation limits.
 
-        Solar (4 m²) and battery (5.5 kWh) are fixed by regulation.
+        Solar ≤ 6 m² (§2.4.2), battery ≤ 11 MJ / 3.056 kWh (§2.5.2).
         All other parameters pushed to engineering limits.
-        Enables ~102 km/h over 3 days at 10 h/day, covering 3022 km.
         """
         return cls(
             # Aerodynamic — single biggest lever (drag ∝ v³)
@@ -81,11 +80,11 @@ class CarConfig:
             bus_voltage=200.0,
             wire_resistance=0.02,
             battery_resistance=0.04,
-            # Battery — REGULATION FIXED
-            battery_capacity_kwh=5.5,   # cannot exceed regulation limit
+            # Battery — BWSC 2027 §2.5.2: 11 MJ = 3.056 kWh
+            battery_capacity_kwh=3.056,
             battery_initial_soc=0.90,
-            # Solar — REGULATION FIXED area; improve efficiency within area
-            panel_area=4.0,             # cannot exceed regulation limit
+            # Solar — BWSC 2027 §2.4.2: max 6 m²; maximise efficiency within area
+            panel_area=6.0,
             panel_efficiency=0.260,     # SunPower Maxeon Gen 6 (~26%)
             panel_temp_coeff=-0.0035,
             panel_temp_operating=45.0,  # active ventilation under panel
