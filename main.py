@@ -90,8 +90,9 @@ def main():
     parser.add_argument("--speed", type=float, default=None,
                         help="Fixed target speed km/h (dynamic if omitted)")
     parser.add_argument("--distance", type=float, default=3022.0, help="Race distance km")
-    parser.add_argument("--days", type=int, default=3, help="Race days")
-    parser.add_argument("--drive-hours", type=float, default=7.5, help="Effective drive hours per day")
+    parser.add_argument("--days", type=int, default=4, help="Race days (3-day NOT feasible under regulation)")
+    parser.add_argument("--stops", type=int, default=2, help="Control stops per day")
+    parser.add_argument("--stop-min", type=float, default=30.0, help="Minutes per control stop")
     parser.add_argument("--preset", choices=["challenger", "optimized_regulation"],
                         default="challenger", help="Car preset")
     parser.add_argument("--car-config", type=str, help="Path to JSON car config")
@@ -113,16 +114,19 @@ def main():
     race = RaceConfig(
         distance_km=args.distance,
         race_days=args.days,
-        drive_start_hour=12.0 - args.drive_hours / 2,
-        drive_end_hour=12.0 + args.drive_hours / 2,
+        control_stops_per_day=args.stops,
+        control_stop_duration_min=args.stop_min,
     )
     route = build_route(args)
 
     print(f"\n{'='*60}")
     print(f"  Solar Car Race Simulator")
-    print(f"  Race:  {race.distance_km:.0f} km  |  {race.race_days} days  |"
-          f"  {race.drive_hours_per_day:.1f} h/day  |  "
-          f"required avg: {race.required_avg_speed():.1f} km/h")
+    print(f"  Race:  {race.distance_km:.0f} km  |  {race.race_days} days")
+    print(f"  Time:  {race.regulation_window_h:.0f}h window (08:00–17:00)  "
+          f"- {race.control_stop_hours_per_day*60:.0f} min stops  "
+          f"= {race.drive_hours_per_day:.1f} h/day effective")
+    print(f"  Need:  {race.required_avg_speed():.1f} km/h avg  "
+          f"over {race.total_drive_hours:.0f} h total")
     print(f"  Car:   Cd={car.Cd}  A={car.frontal_area}m²  m={car.mass_kg}kg"
           f"  Crr={car.Crr}  bat={car.battery_capacity_kwh}kWh")
     print(f"  Solar: {car.panel_area}m² @ {car.panel_efficiency*100:.1f}%  "
