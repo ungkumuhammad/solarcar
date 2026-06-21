@@ -84,8 +84,36 @@ All design and strategy decisions must be checked against the BWSC 2027 Event Re
 | Regulation folder | Complete — official PDF converted to Markdown |
 | Key rules summary | Complete (`regulations/key-rules-summary.md`) |
 | Route data | Approximate — pending official BWSC 2027 route notes |
+| Irradiance data | Complete (`data/irradiance/`) |
+| Elevation data | Complete (`data/elevation/`) |
 | Solar power budget | Not started |
 | Power-speed model | Not started |
 | Battery design | Not started |
 | Energy balance | Not started |
 | Strategy model | Not started |
+
+---
+
+## Session Memory
+
+Memory file: `docs/session-memory.md`
+
+**Read `docs/session-memory.md` at the start of every session before doing any work.** It contains a dated log of all prior sessions and the current project state.
+
+### compress command
+
+When the user says "compress" (or "compress this session"):
+
+1. Summarise the current session into a new dated entry using this structure:
+   ```
+   ## YYYY-MM-DD — <one-line headline>
+   ### Accomplished
+   ### Key Decisions / Findings
+   ### Files Created / Modified
+   ### Project Status
+   ### Next Steps (waiting for instruction)
+   ```
+2. Prepend the new entry at the top of `docs/session-memory.md`, immediately below the file header block (the `> Read this file…` lines and the first `---` divider)
+3. Commit the updated file with message: `chore: compress session YYYY-MM-DD`
+4. Push to the current branch
+5. Confirm to the user that memory has been saved
