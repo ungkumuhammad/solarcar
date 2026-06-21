@@ -9,6 +9,12 @@ from typing import List, Optional
 # rows flagged control_stop=TRUE: Katherine .. Port Augusta.
 OFFICIAL_CONTROL_STOPS_KM = [310, 580, 850, 1120, 1400, 1670, 2040, 2290, 2550]
 
+# Posted speed limits along the route as (cumulative_km_from, limit_kmh) steps.
+# NT Stuart Highway is 130 km/h; the NT→SA border is ~20 km south of Kulgera
+# (~1690 km), after which SA limits the highway to 110 km/h. No derestricted
+# section exists (BWSC §3.31.6 penalises exceeding any posted limit).
+OFFICIAL_SPEED_LIMITS_KM = [(0.0, 130.0), (1690.0, 110.0)]
+
 
 def load_control_stops_km(csv_path: str) -> List[float]:
     """Read cumulative-km of control stops from a route CSV.
@@ -24,6 +30,41 @@ def load_control_stops_km(csv_path: str) -> List[float]:
             if flag in ("TRUE", "1", "YES") and "cumulative_km" in row:
                 stops.append(float(row["cumulative_km"]))
     return stops or list(OFFICIAL_CONTROL_STOPS_KM)
+
+
+def load_speed_limits_km(csv_path: str) -> List[tuple]:
+    """Read posted speed limits from a route CSV as (cumulative_km_from, limit) steps.
+
+    Expects columns ``cumulative_km`` and ``speed_limit_kmh``. A new step is emitted
+    each time the posted limit changes. Falls back to the official NT/SA limits.
+    """
+    steps: List[tuple] = []
+    last_limit = None
+    with open(csv_path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if "speed_limit_kmh" not in row or "cumulative_km" not in row:
+                continue
+            try:
+                km = float(row["cumulative_km"])
+                limit = float(row["speed_limit_kmh"])
+            except (TypeError, ValueError):
+                continue
+            if limit != last_limit:
+                steps.append((km, limit))
+                last_limit = limit
+    return steps or list(OFFICIAL_SPEED_LIMITS_KM)
+
+
+def speed_limit_at_distance(limits: List[tuple], distance_km: float) -> float:
+    """Posted limit (km/h) at a cumulative distance, given (km_from, limit) steps."""
+    limit = limits[0][1] if limits else 130.0
+    for km_from, lim in limits:
+        if distance_km >= km_from:
+            limit = lim
+        else:
+            break
+    return limit
 
 
 @dataclass

@@ -46,16 +46,31 @@ across the whole race**, not per-day. Effective moving time = 9 h/day × race_da
 
 **10 h/day is NOT achievable** — the regulation window is only 9 h.
 
+### Posted Speed Limits (modelled by location, since 2026-06-21)
+| Territory | Posted limit | Applies (cumulative km) |
+|---|---|---|
+| NT (Darwin → ~border) | **130 km/h** | 0 – ~1690 km |
+| SA (~border → Adelaide) | **110 km/h** | ~1690 – 3022 km |
+
+There is **NO derestricted/unlimited section** — BWSC **§3.31.6** penalises "exceeding any
+posted speed limit" (the NT open-speed-limit trial ran 2014–2016 and was abolished). The
+simulator clips speed to the posted limit at the car's position (`environment/route.py`
+→ `speed_limit_at_distance`). An opt-in `--v-max` override exists for **analysis only**
+(not race-legal). **Key consequence:** at legal limits the `optimized_regulation` car is so
+efficient it is **solar-saturated** — at 110 km/h midday solar output *exceeds* demand, so
+the battery fills to ~100% and cannot be drained (see strategy note below).
+
 ### Race Duration Feasibility (simulator results — BWSC 2027 official specs, location-based stops)
 
-| Race days | Effective drive total | Required avg speed | Feasible? |
+| Race days | Effective drive total | Required avg speed | Feasible? (optimized, legal caps) |
 |---|---|---|---|
-| 3 days | 22.5 h | 134.3 km/h | **NO** — optimized car covers 2804.1 km (92.8%), ~218 km short |
-| **4 days** | **31.5 h** | **95.9 km/h** | **YES** — optimized car finishes in 24.5 h at 123.3 km/h, 66.4% SoC remaining |
+| 3 days | 22.5 h | 134.3 km/h | **NO** — covers 2669.3 km (88.3%) |
+| **4 days** | **31.5 h** | **95.9 km/h** | **YES** — finishes 3022 km, avg 116.2 km/h, **100% SoC** |
 | 5 days | 40.5 h | 74.6 km/h | YES |
 
-**Race target: 4 days minimum. Optimized car completes the race in ~24.5 h effective drive
-time, arriving Day 4 morning with a comfortable energy surplus (66.4% SoC).**
+**Race target: 4 days. With per-territory speed limits (NT 130 / SA 110) the optimized car
+finishes 3022 km and arrives essentially full (~100% SoC) — it is solar-saturated and
+cannot legally spend its surplus (it would need to exceed posted limits to go faster).**
 
 ---
 
@@ -235,22 +250,29 @@ speed = clip(speed, v_min=40, v_max=130)
 
 ## Key Simulation Results
 
-> Numbers below are with **location-based control stops** (9 × 30 min = 4.5 h, model
-> updated 2026-06-21). Earlier figures used the retired "2 stops/day end-early" model.
+> Numbers below are with **location-based control stops** (9 × 30 min) **and per-territory
+> speed limits (NT 130 / SA 110)** + **regen-to-battery** (model updated 2026-06-21).
 
 ### Baseline Challenger — 4-day race, WSC route (BWSC 2027 official specs)
-- Covers **2925.4 km** (96.8% of race) — **does NOT finish** (~97 km short)
-- Driving time 31.5 h, Avg speed 92.9 km/h, Final SoC **16.4%**
-- Loss: drag 77.0%, rolling 7.5%, aux 6.6%, drivetrain 4.6%
+- Covers **2931.7 km** (97.0% of race) — **does NOT finish**
+- Driving time 31.5 h, Avg speed 93.1 km/h, Final SoC **16.4%**
 
 ### Optimized Regulation — 4-day race, WSC route ✓ (BWSC 2027 official specs)
-- **Finishes 3022 km**, effective driving time **24.5 h** (completes Day 4 morning, 09:30)
-- Avg speed: **123.3 km/h**, Final battery SoC: **66.4%**
-- Loss: drag 83.5%, rolling 7.0%, aux 4.2%, drivetrain 2.4%
+- **Finishes 3022 km**, Avg speed **116.2 km/h**, Final battery SoC **100%** (solar-saturated)
+- Loss: drag 83.1%, rolling 7.6%, aux 4.7%, drivetrain 2.4%
+- regen recovered ≈ **0 Wh** (wsc grades too gentle; recovery path verified on steeper data)
 
 ### Optimized Regulation — 3-day race, WSC route (for reference)
-- Covers **2804.1 km** (92.8%) — **does NOT finish** (~218 km short; 9 stops cost more in 3 days)
-- Avg speed: 124.6 km/h, Final SoC: 80.4%
+- Covers **2669.3 km** (88.3%) — **does NOT finish** (slower due to SA 110 cap + 9 stops)
+- Avg speed: 118.6 km/h, Final SoC: 98.6%
+
+### Whole-race battery strategy (`--target-soc`)
+- Spends surplus on speed to arrive at a target SoC; calibrates a discharge scale by
+  bisection (`RaceSimulator.run_to_target_soc`).
+- **At legal limits, target 20% is UNREACHABLE** — floor is **95.7%** (solar-saturated).
+- With `--v-max 150` (illegal, analysis): reaches **20.2%** at avg **128.6 km/h**.
+- **Engineering takeaway: the battery surplus cannot be used at legal speeds — the car is
+  over-powered for NT 130 / SA 110. Spending it requires exceeding speed limits.**
 
 ---
 
@@ -331,6 +353,13 @@ python main.py --preset optimized_regulation --route wsc --verbose
 # Visualize: dashboard + per-day power plots, speed table, CSV export (needs matplotlib)
 python main.py --preset optimized_regulation --route wsc --plot --table --csv
 
+# Whole-race battery plan → target final SoC (calibrated). Legal caps can't reach 20%:
+python main.py --preset optimized_regulation --route wsc --target-soc 0.20
+# To actually spend the surplus you must exceed posted limits (analysis only):
+python main.py --preset optimized_regulation --route wsc --v-max 150 --target-soc 0.20
+
+# Interactive HTML dashboard: open index.html in a browser (or host on GitHub Pages)
+
 # Change control stop assumptions
 python main.py --preset optimized_regulation --stops 3 --stop-min 20 --route wsc
 
@@ -340,35 +369,41 @@ python main.py --cd 0.07 --mass 155 --route wsc
 
 ---
 
-## Verified Simulation Output (2026-06-21, BWSC 2027 official specs: 6 m² solar, 3.056 kWh battery; location-based control stops)
+## Verified Simulation Output (2026-06-21: location-based stops + posted speed limits NT 130/SA 110 + regen)
 
 ### `python main.py --preset optimized_regulation --route wsc`
 ```
-Distance covered:  3022.0 km  ← FINISHES (Day 4, 09:30)
-Driving time:        24.5 h
-Average speed:      123.3 km/h
-Final battery SoC:   66.4%
-Energy in:         30807.3 Wh  (solar 30086 + battery 722)
-Loss breakdown:    drag 83.5%, rolling 7.0%, aux 4.2%, drivetrain 2.4%
+Distance covered:  3022.0 km  ← FINISHES
+Average speed:      116.2 km/h
+Final battery SoC:  100.0%   (solar-saturated at legal speed caps)
+Energy in:         31504.0 Wh
+Loss breakdown:    drag 83.1%, rolling 7.6%, aux 4.7%, drivetrain 2.4%
 ```
 
-### `python main.py --preset optimized_regulation --route wsc --days 3`
+### `python main.py --preset optimized_regulation --route wsc --target-soc 0.20`
 ```
-Distance covered:  2804.1 km  ← DOES NOT FINISH (92.8%, ~218 km short)
-Driving time:        22.5 h
-Average speed:      124.6 km/h
-Final battery SoC:   80.4%
+[calibrate] target 20% not reachable within speed limits; floor is 95.7%
+Final battery SoC:  95.7%    ← cannot spend surplus at legal speeds
+```
+
+### `python main.py --preset optimized_regulation --route wsc --v-max 150 --target-soc 0.20`
+```
+Calibrated whole-race discharge scale = 15.0 → final SoC 20.2%
+Average speed:      128.6 km/h   (requires exceeding posted limits — analysis only)
 ```
 
 ### `python main.py --route wsc`  (baseline challenger)
 ```
-Distance covered:  2925.4 km  ← DOES NOT FINISH (96.8%)
-Driving time:        31.5 h
-Average speed:       92.9 km/h
+Distance covered:  2931.7 km  ← DOES NOT FINISH (97.0%)
+Average speed:       93.1 km/h
 Final battery SoC:   16.4%
-Energy in:         36027.2 Wh  (solar ~33650 + battery ~2377)
-Loss breakdown:    drag 77.0%, rolling 7.5%, aux 6.6%, drivetrain 4.6%
 ```
+
+### Interactive dashboard (`index.html`)
+Self-contained in-browser port of the simulator (Chart.js via CDN). Sliders for every
+car/race/strategy parameter recompute live; deploys to GitHub Pages via
+`.github/workflows/pages.yml` (enable Settings → Pages → GitHub Actions once). The JS
+results match the Python model exactly (verified).
 
 ### Visualization & export (added 2026-06-21)
 ```
@@ -473,15 +508,16 @@ When the user says "compress" (or "compress this session"):
 1. ✅ **Matplotlib plots** — speed profile, SoC trace, power breakdown per day, elevation,
    irradiance (`simulation/plots.py`, `--plot`) — **DONE 2026-06-21**
 2. ✅ **CSV export** — speed table + full per-timestep trace (`simulation/tables.py`, `--csv`) — **DONE**
-3. **Whole-race battery strategy** *(agreed next step)* — replace the greedy per-day
-   `battery_discharge_budget` (`speed_strategy.py`) with a lookahead that ensures charge
-   lasts to Adelaide, not just to end of day.
-4. **Regen → battery charging** — remove the `max(0.0, …)` clamp in `simulator.py` so
-   downhill regen surplus charges the pack (bounded by a max regen current).
-5. **Location-based irradiance** — wire `data/irradiance/` per-checkpoint data into the
+3. ✅ **Whole-race battery strategy** — `--target-soc` + `run_to_target_soc` calibration
+   (`speed_strategy.py`, `simulator.py`) — **DONE 2026-06-21**. Finding: surplus is
+   unspendable at legal speed limits (car is solar-saturated).
+4. ✅ **Regen → battery charging** — `gravity_power` + regen recovery in `simulator.py`
+   (≈0 Wh on wsc grades) — **DONE**
+5. ✅ **Posted speed limits by location** — NT 130 / SA 110 (§3.31.6) — **DONE**
+6. ✅ **Interactive web dashboard** — `index.html` (JS port) + Pages workflow — **DONE**
+7. **Location-based irradiance** — wire `data/irradiance/` per-checkpoint data into the
    sim so solar varies by position, not just time of day.
-6. **Sensitivity analysis** — rank which parameter most affects finish time.
-7. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound).
-8. **Cloud/weather model** — stochastic irradiance variation day-to-day.
-9. **Race strategy optimizer** — optimal speed per segment to minimize total time.
-10. **Web dashboard** — interactive sliders for real-time car parameter exploration.
+8. **Sensitivity analysis** — rank which parameter most affects finish time.
+9. **Wind model** — headwind/tailwind (Stuart Highway avg ~10 km/h headwind northbound).
+10. **Cloud/weather model** — stochastic irradiance variation day-to-day.
+11. **Race strategy optimizer** — optimal speed per segment to minimize total time.

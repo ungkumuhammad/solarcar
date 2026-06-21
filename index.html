@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solar Car Race Simulator — BWSC 2027</title>
+<!--
+  Interactive dashboard for the Solar Car race simulator.
+  This is a faithful JavaScript PORT of the Python model (losses/, environment/,
+  simulation/). The Python code remains the source of truth; keep this in sync when
+  the model changes. Mirrors: all 10 losses, dynamic speed strategy, whole-race
+  battery plan + calibration, location-based control stops, per-territory speed
+  limits (NT 130 / SA 110, §3.31.6), and regen-to-battery.
+-->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --ink:#e6edf3; --mut:#8b98a5; --acc:#4aa8ff; --line:#2a333d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--mut); font-size:12px; }
+  .wrap { display:grid; grid-template-columns:320px 1fr; gap:0; align-items:start; }
+  .controls { padding:14px 16px; border-right:1px solid var(--line); height:calc(100vh - 52px); overflow-y:auto; }
+  .main { padding:16px 20px; }
+  .group { margin-bottom:14px; }
+  .group h3 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); margin:0 0 8px; }
+  .ctl { margin-bottom:9px; }
+  .ctl label { display:flex; justify-content:space-between; font-size:12px; margin-bottom:2px; }
+  .ctl label .val { color:var(--acc); font-variant-numeric:tabular-nums; }
+  .ctl input[type=range] { width:100%; accent-color:var(--acc); }
+  .row { display:flex; gap:8px; align-items:center; }
+  select, button, input[type=number] { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--acc); color:#04121f; border-color:var(--acc); font-weight:600; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .card .k { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .card .v { font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .card .v.good { color:#3fb950; } .card .v.bad { color:#f85149; }
+  .note { background:#23303b; border-left:3px solid var(--acc); padding:8px 12px; border-radius:4px; margin-bottom:14px; font-size:13px; color:#cdd9e5; }
+  .charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .chartbox { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .chartbox.wide { grid-column:1 / -1; }
+  .chartbox h4 { margin:0 0 6px; font-size:12px; color:var(--mut); font-weight:600; }
+  canvas { max-height:230px; }
+  .tablebox { margin-top:16px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px; overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:12px; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:3px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mut); position:sticky; top:0; background:var(--panel); }
+  td.note, th.note { text-align:left; color:var(--acc); }
+  tr.stop td { color:#d29922; }
+  .toggle { display:flex; align-items:center; gap:6px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏎️☀️ Solar Car Race Simulator</h1>
+  <span class="sub">BWSC 2027 Challenger · Darwin→Adelaide 3022 km · in-browser model (mirrors the Python simulator)</span>
+</header>
+<div class="wrap">
+  <aside class="controls" id="controls"></aside>
+  <main class="main">
+    <div id="note" class="note" style="display:none"></div>
+    <div class="cards" id="cards"></div>
+    <div class="charts">
+      <div class="chartbox wide"><h4>Speed (km/h) — drops to 0 at control stops / overnight</h4><canvas id="cSpeed"></canvas></div>
+      <div class="chartbox"><h4>Battery SoC (%)</h4><canvas id="cSoc"></canvas></div>
+      <div class="chartbox"><h4>Irradiance (W/m²)</h4><canvas id="cIrr"></canvas></div>
+      <div class="chartbox wide"><h4>Power demand by loss (W, stacked) vs solar input</h4><canvas id="cPower"></canvas></div>
+      <div class="chartbox wide"><h4>Route elevation (m) at car position</h4><canvas id="cElev"></canvas></div>
+    </div>
+    <div class="tablebox">
+      <h4 style="margin:0 0 8px;color:var(--mut);font-size:12px">Speed profile — one row per substantial speed change (+ day starts, control stops, finish)</h4>
+      <div id="table"></div>
+    </div>
+  </main>
+</div>
+<script>
+"use strict";
+// ───────────────────────── Model constants (mirror Python) ─────────────────────────
+const G = 9.81, CRR_SPEED_FACTOR = 0.01, PANEL_TEMP_STC = 25.0;
+const WSC_SEGMENTS = [ // [distance_km, grade_%, altitude_m]
+  [200,0.0,50],[300,0.5,150],[200,1.2,400],[100,-0.8,350],
+  [200,0.3,400],[250,-0.5,200],[300,0.2,250],[472,-0.3,50],
+];
+const CONTROL_STOPS_KM = [310,580,850,1120,1400,1670,2040,2290,2550];
+const SPEED_LIMITS = [[0,130],[1690,110]]; // [from_km, limit] — NT 130 / SA 110 (§3.31.6)
+
+const PRESETS = {
+  challenger: { Cd:0.09, A:0.96, mass:180, Crr:0.0015, motorEff:0.96, gearEff:0.99, regenEff:0.72,
+    busV:150, wireR:0.04, battR:0.08, battKwh:3.056, initSoc:0.80, panelArea:6.0, panelEff:0.245,
+    tempCoeff:-0.0038, tOp:55, mppt:0.98, auxDrive:55, auxPark:10 },
+  optimized: { Cd:0.07, A:0.60, mass:150, Crr:0.0012, motorEff:0.98, gearEff:0.995, regenEff:0.85,
+    busV:200, wireR:0.02, battR:0.04, battKwh:3.056, initSoc:0.90, panelArea:6.0, panelEff:0.260,
+    tempCoeff:-0.0035, tOp:45, mppt:0.99, auxDrive:30, auxPark:8 },
+};
+const RACE = { distance:3022, days:4, winStart:8, winEnd:17, numStops:9, stopMin:30, dt:30,
+  ambient:35, sunrise:6.5, sunset:18.5, peak:1000, cloud:1.0, vmin:40, vmax:130 };
+
+// ───────────────────────── Physics (mirror losses/ + environment/) ─────────────────────────
+function airDensity(alt, tC){ const pr=Math.pow(1-2.2558e-5*alt,5.2559); return 1.225*pr*(288.15/(tC+273.15)); }
+function irradiance(h,p){ if(h<=p.sunrise||h>=p.sunset) return 0; const t=(h-p.sunrise)/(p.sunset-p.sunrise); return p.peak*Math.pow(Math.sin(Math.PI*t),1.5)*p.cloud; }
+function solarPower(irr,c){ if(irr<=0) return 0; const f=1+c.tempCoeff*(c.tOp-PANEL_TEMP_STC); return c.panelArea*c.panelEff*irr*f*c.mppt; }
+function dragPower(v,c,rho){ return 0.5*c.Cd*c.A*rho*v*v*v; }
+function rollPower(v,c,grade){ const cr=c.Crr*(1+v*CRR_SPEED_FACTOR); const th=Math.atan(grade/100); return cr*c.mass*G*Math.cos(th)*v; }
+function gravityPower(v,grade,mass){ return mass*G*Math.sin(Math.atan(grade/100))*v; }
+function drivetrainIn(pm,c){ return pm/(c.motorEff*c.gearEff); }
+function wireLoss(p,c){ const I=p/c.busV; return I*I*c.wireR; }
+function battLoss(p,c){ const I=p/c.busV; return I*I*c.battR; }
+
+function gradeAt(d){ let cum=0; for(const s of WSC_SEGMENTS){ cum+=s[0]; if(d<=cum) return [s[1],s[2]]; } const last=WSC_SEGMENTS[WSC_SEGMENTS.length-1]; return [0,last[2]]; }
+function speedLimitAt(d,vmaxOverride){ if(vmaxOverride) return vmaxOverride; let lim=SPEED_LIMITS[0][1]; for(const[k,l]of SPEED_LIMITS){ if(d>=k) lim=l; else break; } return lim; }
+
+// Total electrical demand at a speed (for the bisection speed solve)
+function totalDemand(vms,grade,alt,c,ambient){
+  const rho=airDensity(alt,ambient);
+  let pm=dragPower(vms,c,rho)+rollPower(vms,c,grade)+gravityPower(vms,grade,c.mass);
+  pm=Math.max(0,pm);
+  const pin=drivetrainIn(pm,c)+c.auxDrive;
+  return pin+wireLoss(pin,c)+battLoss(pin,c);
+}
+function batteryBudget(soc,c,hoursToday,hoursTotal,target,scale,maxBat,wholeMaxBat){
+  if(target!=null){
+    const usable=Math.max(0,(soc-target)*c.battKwh);
+    const hrs=(hoursTotal&&hoursTotal>0)?hoursTotal:hoursToday;
+    if(!hrs||hrs<=0) return 0;
+    return Math.min(wholeMaxBat, scale*usable*1000/hrs);
+  }
+  const usable=Math.max(0,(soc-0.10)*c.battKwh);
+  if(hoursToday<=0) return 0;
+  return Math.min(maxBat, usable*1000/hoursToday);
+}
+function computeSpeed(solarW,soc,grade,alt,c,p,hoursToday,hoursTotal,target,scale,vCapKmh){
+  const bat=batteryBudget(soc,c,hoursToday,hoursTotal,target,scale,500,5000);
+  const avail=Math.max(0,solarW)+bat;
+  const vmin=p.vmin/3.6, vhi=Math.min(p.vmaxStrategy/3.6, vCapKmh/3.6);
+  let lo=vmin, hi=vhi;
+  for(let i=0;i<50;i++){ const mid=(lo+hi)/2; if(totalDemand(mid,grade,alt,c,p.ambient)<avail) lo=mid; else hi=mid; }
+  let v=(lo+hi)/2; v=Math.max(vmin,Math.min(vhi,v)); return v*3.6;
+}
+
+// ───────────────────────── Simulator (mirror simulation/simulator.py) ─────────────────────────
+function simulate(c,p,scale){
+  const dtH=p.dt/60, batMin=c.battKwh*0.10, maxRegen=3000;
+  const totalDriveH=p.winStart!=null ? (p.winEnd-p.winStart)*p.days - p.numStops*p.stopMin/60 : 0;
+  const stops=CONTROL_STOPS_KM.filter(s=>s<p.distance).slice(0,p.numStops);
+  let batt=c.battKwh*c.initSoc, dist=0, nextStop=0, stopRem=0, driveH=0;
+  const T={time:[],day:[],dist:[],speed:[],soc:[],solar:[],demand:[],irr:[],grade:[],alt:[],driving:[],stop:[],
+           drag:[],roll:[],grad:[],drive:[],aux:[],elec:[],regen:[]};
+  let totals={drag:0,roll:0,grad:0,drive:0,wire:0,bint:0,aux:0,regen:0,solar:0};
+  let completed=false;
+  function rec(o){ T.time.push(o.t);T.day.push(o.d);T.dist.push(o.dist);T.speed.push(o.spd);T.soc.push(o.soc);
+    T.solar.push(o.solar);T.demand.push(o.dem);T.irr.push(o.irr);T.grade.push(o.gr);T.alt.push(o.alt);
+    T.driving.push(o.drv);T.stop.push(o.st);T.drag.push(o.drag||0);T.roll.push(o.roll||0);T.grad.push(o.grad||0);
+    T.drive.push(o.dl||0);T.aux.push(o.auxw||0);T.elec.push(o.el||0);T.regen.push(o.rg||0); }
+
+  for(let day=0; day<p.days; day++){
+    for(let hour=0; hour<24; hour+=dtH){
+      let soc=batt/c.battKwh;
+      const irr=irradiance(hour,p), Psolar=solarPower(irr,c);
+      const inWin = hour>=p.winStart && hour<p.winEnd;
+      const [grade,alt]=gradeAt(dist);
+      const atCp = nextStop<stops.length && dist>=stops[nextStop]-1e-6 && dist<p.distance;
+      if(inWin && atCp && stopRem<=0) stopRem=p.stopMin;
+      const serving = inWin && stopRem>0;
+      const driving = inWin && !serving && batt>batMin && dist<p.distance;
+
+      if(driving){
+        const rho=airDensity(alt,p.ambient);
+        const hToday=Math.max(0.01,p.winEnd-hour), hTotal=Math.max(0.01,totalDriveH-driveH);
+        const vCap=speedLimitAt(dist,p.vmaxOverride);
+        let spd = p.fixedSpeed!=null ? Math.min(p.fixedSpeed,vCap)
+                  : computeSpeed(Psolar,soc,grade,alt,c,p,hToday,hTotal,p.target,scale,vCap);
+        const v=spd/3.6;
+        const Pdrag=dragPower(v,c,rho), Proll=rollPower(v,c,grade), Pgrav=gravityPower(v,grade,c.mass);
+        const balance=Pdrag+Proll+Pgrav, Pmech=Math.max(0,balance);
+        let Pregen=0; if(balance<0) Pregen=Math.min(maxRegen,-balance*c.regenEff*c.motorEff*c.gearEff);
+        const Pin=drivetrainIn(Pmech,c), Pdl=Pin-Pmech, Paux=c.auxDrive, Pelec=Pin+Paux;
+        const Pwire=wireLoss(Pelec,c), Pbint=battLoss(Pelec,c), Pdem=Pelec+Pwire+Pbint;
+        totals.drag+=Pdrag*dtH; totals.roll+=Proll*dtH; totals.grad+=Pgrav*dtH; totals.drive+=Pdl*dtH;
+        totals.wire+=Pwire*dtH; totals.bint+=Pbint*dtH; totals.aux+=Paux*dtH; totals.regen+=Pregen*dtH;
+        batt=Math.max(batMin,Math.min(c.battKwh,batt+(Psolar-Pdem+Pregen)*dtH/1000));
+        dist=Math.min(p.distance,dist+spd*dtH); driveH+=dtH; soc=batt/c.battKwh;
+        rec({t:day+hour/24,d:day+1,dist,spd,soc,solar:Psolar,dem:Pdem,irr,gr:grade,alt,drv:true,st:false,
+             drag:Pdrag,roll:Proll,grad:Pgrav,dl:Pdl,auxw:Paux,el:Pwire+Pbint,rg:Pregen});
+      } else {
+        const Paux=c.auxPark; batt=Math.max(0,Math.min(c.battKwh,batt+(Psolar-Paux)*dtH/1000));
+        totals.aux+=Paux*dtH;
+        if(serving){ stopRem-=p.dt; if(stopRem<=0) nextStop++; }
+        if(serving||irr>0){ soc=batt/c.battKwh;
+          rec({t:day+hour/24,d:day+1,dist,spd:0,soc,solar:Psolar,dem:Paux,irr,gr:grade,alt,drv:false,st:serving,auxw:Paux}); }
+      }
+      totals.solar+=Psolar*dtH;
+      if(dist>=p.distance){ completed=true; break; }
+    }
+    if(completed) break;
+  }
+  const finalSoc=batt/c.battKwh;
+  const consumed=totals.drag+totals.roll+Math.max(0,totals.grad)+totals.drive+totals.wire+totals.bint+totals.aux;
+  return { T, totals, finalSoc, completed, dist, driveH,
+    avgSpeed: driveH>0?dist/driveH:0, consumed,
+    energyIn: totals.solar + (c.battKwh*c.initSoc-batt)*1000 };
+}
+
+// Calibrate discharge scale so final SoC ≈ target (bisection; returns {res,scale,capLimited})
+function calibrate(c,p,target){
+  const maxScale=30;
+  let hi=simulate(c,p,maxScale);
+  if(hi.finalSoc>target+0.01) return {res:hi,scale:maxScale,capLimited:true};
+  let lo=0,h=maxScale,res=hi,mid=0;
+  for(let i=0;i<24;i++){ mid=(lo+h)/2; res=simulate(c,p,mid);
+    if(Math.abs(res.finalSoc-target)<=0.01) break;
+    if(res.finalSoc>target) lo=mid; else h=mid; }
+  return {res,scale:mid,capLimited:false};
+}
+
+// ───────────────────────── UI ─────────────────────────
+const PARAM_SCHEMA = [
+  ['Car aerodynamics & mass', [
+    ['Cd','Drag coeff Cd',0.04,0.15,0.001],['A','Frontal area (m²)',0.4,1.4,0.01],['mass','Mass (kg)',120,260,1],
+    ['Crr','Rolling coeff Crr',0.0008,0.004,0.0001]]],
+  ['Drivetrain & electrical', [
+    ['motorEff','Motor η',0.90,0.99,0.001],['gearEff','Gear η',0.95,0.999,0.001],['regenEff','Regen η',0.5,0.95,0.01],
+    ['busV','Bus voltage (V)',100,250,5],['wireR','Wire R (Ω)',0.01,0.08,0.005],['battR','Battery R (Ω)',0.02,0.12,0.005]]],
+  ['Battery', [
+    ['battKwh','Capacity (kWh)',2.0,5.5,0.05],['initSoc','Initial SoC',0.3,1.0,0.01]]],
+  ['Solar', [
+    ['panelArea','Panel area (m²)',3,6,0.1],['panelEff','Panel η',0.18,0.30,0.005],['tOp','Panel temp (°C)',30,70,1],
+    ['mppt','MPPT η',0.95,0.995,0.005]]],
+  ['Auxiliary', [
+    ['auxDrive','Aux driving (W)',20,80,1],['auxPark','Aux parked (W)',5,20,1]]],
+  ['Race & strategy', [
+    ['days','Race days',3,6,1],['numStops','Control stops',0,9,1],['stopMin','Stop minutes',0,45,5]]],
+];
+let CAR = {...PRESETS.optimized};
+let PARAMS = { distance:RACE.distance, days:RACE.days, winStart:RACE.winStart, winEnd:RACE.winEnd,
+  numStops:RACE.numStops, stopMin:RACE.stopMin, dt:RACE.dt, ambient:RACE.ambient, sunrise:RACE.sunrise,
+  sunset:RACE.sunset, peak:RACE.peak, cloud:RACE.cloud, vmin:RACE.vmin, vmax:RACE.vmax, vmaxStrategy:RACE.vmax,
+  fixedSpeed:null, target:null, vmaxOverride:null };
+
+function buildControls(){
+  const root=document.getElementById('controls'); root.innerHTML='';
+  // preset + strategy
+  const g0=document.createElement('div'); g0.className='group';
+  g0.innerHTML=`<h3>Preset & strategy</h3>
+    <div class="ctl"><div class="row">
+      <select id="preset"><option value="optimized">Optimized (regulation-best)</option><option value="challenger">Challenger (baseline)</option></select>
+    </div></div>
+    <div class="ctl"><label class="toggle"><input type="checkbox" id="useTarget"> Whole-race plan → target SoC</label>
+      <input type="range" id="targetSoc" min="0.05" max="0.9" step="0.01" value="0.20" disabled>
+      <label><span>target final SoC</span><span class="val" id="targetSocV">20%</span></label></div>
+    <div class="ctl"><label class="toggle"><input type="checkbox" id="useVmax"> Override speed cap (not race-legal)</label>
+      <input type="range" id="vmaxOv" min="110" max="180" step="5" value="150" disabled>
+      <label><span>v-max override</span><span class="val" id="vmaxOvV">150</span></label></div>`;
+  root.appendChild(g0);
+  for(const [title,items] of PARAM_SCHEMA){
+    const g=document.createElement('div'); g.className='group';
+    g.innerHTML=`<h3>${title}</h3>`;
+    for(const [key,label,min,max,step] of items){
+      const isRace = key in PARAMS && !(key in CAR);
+      const val = isRace ? PARAMS[key] : CAR[key];
+      const d=document.createElement('div'); d.className='ctl';
+      d.innerHTML=`<label><span>${label}</span><span class="val" id="v_${key}">${fmtVal(key,val)}</span></label>
+        <input type="range" id="r_${key}" min="${min}" max="${max}" step="${step}" value="${val}">`;
+      g.appendChild(d);
+    }
+    root.appendChild(g);
+  }
+  // wire events
+  document.getElementById('preset').addEventListener('change',e=>{ CAR={...PRESETS[e.target.value]}; buildControls(); run(); });
+  for(const [,items] of PARAM_SCHEMA) for(const [key] of items){
+    document.getElementById('r_'+key).addEventListener('input',e=>{
+      const v=parseFloat(e.target.value);
+      if(key in CAR) CAR[key]=v; else PARAMS[key]=v;
+      document.getElementById('v_'+key).textContent=fmtVal(key,v); debounced();
+    });
+  }
+  const ut=document.getElementById('useTarget'), ts=document.getElementById('targetSoc');
+  ut.addEventListener('change',()=>{ ts.disabled=!ut.checked; PARAMS.target=ut.checked?parseFloat(ts.value):null; run(); });
+  ts.addEventListener('input',()=>{ document.getElementById('targetSocV').textContent=Math.round(ts.value*100)+'%'; PARAMS.target=parseFloat(ts.value); debounced(); });
+  const uv=document.getElementById('useVmax'), vo=document.getElementById('vmaxOv');
+  uv.addEventListener('change',()=>{ vo.disabled=!uv.checked; PARAMS.vmaxOverride=uv.checked?parseFloat(vo.value):null;
+    PARAMS.vmaxStrategy=uv.checked?Math.max(RACE.vmax,parseFloat(vo.value)):RACE.vmax; run(); });
+  vo.addEventListener('input',()=>{ document.getElementById('vmaxOvV').textContent=vo.value; PARAMS.vmaxOverride=parseFloat(vo.value);
+    PARAMS.vmaxStrategy=Math.max(RACE.vmax,parseFloat(vo.value)); debounced(); });
+}
+function fmtVal(key,v){ if(['initSoc','mppt','motorEff','gearEff','regenEff','panelEff'].includes(key)) return (v*100).toFixed(1)+'%';
+  if(['Cd','Crr'].includes(key)) return (+v).toFixed(key==='Crr'?4:3); return (+v).toString(); }
+
+let debTimer=null; function debounced(){ clearTimeout(debTimer); debTimer=setTimeout(run,120); }
+
+// ───────────────────────── Render ─────────────────────────
+const charts={};
+function mkChart(id,cfg){ if(charts[id]) charts[id].destroy(); charts[id]=new Chart(document.getElementById(id),cfg); }
+const COLORS={drag:'#d62728',roll:'#ff7f0e',grad:'#8c564b',drive:'#9467bd',aux:'#2ca02c',elec:'#1f77b4'};
+function fmtTime(t){ const d=Math.floor(t),h=(t-d)*24,hh=Math.floor(h),mm=Math.round((h-hh)*60); return `D${d+1} ${String(hh).padStart(2,'0')}:${String(mm===60?0:mm).padStart(2,'0')}`; }
+
+function run(){
+  let r,scale=null,capLimited=false;
+  if(PARAMS.target!=null){ const cal=calibrate(CAR,PARAMS,PARAMS.target); r=cal.res; scale=cal.scale; capLimited=cal.capLimited; }
+  else r=simulate(CAR,PARAMS,1.0);
+  const T=r.T, x=T.time;
+
+  // note
+  const note=document.getElementById('note');
+  if(PARAMS.target!=null){
+    note.style.display='block';
+    note.innerHTML = capLimited
+      ? `⚠️ Target ${Math.round(PARAMS.target*100)}% SoC <b>not reachable</b> within the speed cap — achievable floor is <b>${(r.finalSoc*100).toFixed(1)}%</b> (the car is solar-saturated; it can't spend the surplus without exceeding the limit).`
+      : `✓ Whole-race plan calibrated (discharge scale ${scale.toFixed(2)}) → final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b>.`;
+  } else note.style.display='none';
+
+  // cards
+  const loss=k=>r.consumed>0?(k/r.consumed*100).toFixed(1)+'%':'–';
+  document.getElementById('cards').innerHTML = `
+    ${card('Distance', r.dist.toFixed(0)+' km', r.completed?'good':'bad')}
+    ${card('Finished?', r.completed?'YES':'NO', r.completed?'good':'bad')}
+    ${card('Avg speed', r.avgSpeed.toFixed(1)+' km/h')}
+    ${card('Final SoC', (r.finalSoc*100).toFixed(1)+'%')}
+    ${card('Drive time', r.driveH.toFixed(1)+' h')}
+    ${card('Energy in', (r.energyIn/1000).toFixed(1)+' kWh')}
+    ${card('Drag share', loss(r.totals.drag))}
+    ${card('Regen recovered', (r.totals.regen).toFixed(0)+' Wh')}`;
+
+  const baseX={ type:'linear', ticks:{ color:'#8b98a5', callback:v=>'D'+(Math.floor(v)+1), maxTicksLimit:8 }, grid:{color:'#222b34'} };
+  const yAx=t=>({ ticks:{color:'#8b98a5'}, grid:{color:'#222b34'}, title:{display:!!t,text:t,color:'#8b98a5'} });
+  const baseOpts=ex=>({ responsive:true, animation:false, parsing:false, plugins:{legend:{display:false}},
+    scales:{x:baseX, y:yAx()}, elements:{point:{radius:0}}, ...ex });
+  const pts=arr=>x.map((t,i)=>({x:t,y:arr[i]}));
+
+  mkChart('cSpeed',{type:'line',data:{datasets:[{data:pts(T.speed),borderColor:'#4aa8ff',borderWidth:1.3,fill:true,backgroundColor:'rgba(74,168,255,.12)'}]},options:baseOpts()});
+  mkChart('cSoc',{type:'line',data:{datasets:[{data:pts(T.soc.map(s=>s*100)),borderColor:'#3fb950',borderWidth:1.5,fill:true,backgroundColor:'rgba(63,185,80,.12)'}]},options:baseOpts({scales:{x:baseX,y:{...yAx('%'),min:0,max:100}}})});
+  mkChart('cIrr',{type:'line',data:{datasets:[{data:pts(T.irr),borderColor:'#ff7f0e',borderWidth:1.2,fill:true,backgroundColor:'rgba(255,127,14,.12)'}]},options:baseOpts()});
+  mkChart('cElev',{type:'line',data:{datasets:[{data:pts(T.alt),borderColor:'#8c564b',borderWidth:1.3,fill:true,backgroundColor:'rgba(140,86,75,.18)'}]},options:baseOpts()});
+
+  const lossDS=(k,lbl)=>({label:lbl,data:pts(T[k]),borderColor:COLORS[k],backgroundColor:COLORS[k]+'cc',borderWidth:0,fill:true,stack:'loss'});
+  mkChart('cPower',{type:'line',data:{datasets:[
+      lossDS('drag','Drag'),lossDS('roll','Rolling'),lossDS('grad','Gradient'),
+      lossDS('drive','Drivetrain'),lossDS('aux','Aux'),lossDS('elec','Electrical'),
+      {label:'Solar',data:pts(T.solar),borderColor:'#fff',borderWidth:1.2,fill:false,stack:'sun'}]},
+    options:baseOpts({plugins:{legend:{display:true,labels:{color:'#8b98a5',boxWidth:10,font:{size:10}}}},scales:{x:baseX,y:{...yAx('W'),stacked:true}}})});
+
+  renderTable(T);
+}
+function card(k,v,cls){ return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`; }
+
+function renderTable(T){
+  const thr=8, rows=[]; let lastSpd=null,lastDay=null;
+  const drvIdx=[]; for(let i=0;i<T.time.length;i++) if(T.driving[i]) drvIdx.push(i);
+  const lastDrv=drvIdx[drvIdx.length-1];
+  for(let i=0;i<T.time.length;i++){
+    if(T.stop[i]){ if(rows.length&&rows[rows.length-1]._stop&&Math.abs(rows[rows.length-1].d-T.dist[i])<0.5) continue;
+      rows.push(mkRow(T,i,0,'CONTROL STOP',true)); continue; }
+    if(!T.driving[i]) continue;
+    const first=T.day[i]!==lastDay, last=i===lastDrv, big=lastSpd==null||Math.abs(T.speed[i]-lastSpd)>=thr;
+    if(first||last||big){ rows.push(mkRow(T,i,lastSpd==null?0:T.speed[i]-lastSpd,first?'day start':(last?'finish':''),false)); lastSpd=T.speed[i]; }
+    lastDay=T.day[i];
+  }
+  const cols=['Time','Dist','Speed','Δ','Irr','Grd%','Elev','Solar','Demand','SoC','Note'];
+  let html='<table><thead><tr>'+cols.map(c=>`<th class="${c==='Note'?'note':''}">${c}</th>`).join('')+'</tr></thead><tbody>';
+  for(const r of rows){ html+=`<tr class="${r._stop?'stop':''}">`+
+    `<td>${r.time}</td><td>${r.d.toFixed(0)}</td><td>${r.spd.toFixed(1)}</td><td>${r.dlt>0?'+':''}${r.dlt.toFixed(1)}</td>`+
+    `<td>${r.irr.toFixed(0)}</td><td>${r.gr.toFixed(2)}</td><td>${r.alt.toFixed(0)}</td><td>${r.solar.toFixed(0)}</td>`+
+    `<td>${r.dem.toFixed(0)}</td><td>${r.soc.toFixed(1)}</td><td class="note">${r.note}</td></tr>`; }
+  document.getElementById('table').innerHTML=html+'</tbody></table>';
+}
+function mkRow(T,i,dlt,note,stop){ return {time:fmtTime(T.time[i]),d:T.dist[i],spd:T.speed[i],dlt,irr:T.irr[i],
+  gr:T.grade[i],alt:T.alt[i],solar:T.solar[i],dem:T.demand[i],soc:T.soc[i]*100,note,_stop:stop}; }
+
+buildControls(); run();
+</script>
+</body>
+</html>

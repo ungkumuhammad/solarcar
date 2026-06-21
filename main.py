@@ -15,7 +15,10 @@ import os
 
 from models.car import CarConfig
 from models.race import RaceConfig
-from environment.route import RouteProfile, load_control_stops_km, OFFICIAL_CONTROL_STOPS_KM
+from environment.route import (
+    RouteProfile, load_control_stops_km, OFFICIAL_CONTROL_STOPS_KM,
+    load_speed_limits_km, OFFICIAL_SPEED_LIMITS_KM,
+)
 from simulation.simulator import RaceSimulator
 from simulation.energy_budget import EnergyBudget
 from simulation import tables
@@ -111,6 +114,12 @@ def main():
     parser.add_argument("--out", default="output", help="Output directory for plots/CSVs")
     parser.add_argument("--table-threshold", type=float, default=5.0, dest="table_threshold",
                         help="km/h change that counts as a new table row")
+    # Strategy
+    parser.add_argument("--target-soc", type=float, default=None, dest="target_soc",
+                        help="Target final battery SoC (0-1), e.g. 0.20. Enables the "
+                             "whole-race battery strategy that spends surplus on speed.")
+    parser.add_argument("--v-max", type=float, default=None, dest="v_max",
+                        help="Override posted speed limit cap km/h (analysis only, not race-legal)")
     # Parameter overrides
     parser.add_argument("--cd", type=float, default=None)
     parser.add_argument("--frontal-area", type=float, default=None, dest="frontal_area")
@@ -125,12 +134,15 @@ def main():
     car = build_car(args)
     route = build_route(args)
 
-    # Control-stop positions: from a CSV route if given, else official BWSC stops.
+    # Control-stop positions + posted speed limits: from a CSV route if given,
+    # else the official BWSC stops / NT-SA speed limits.
     route_name = getattr(args, "route", "flat")
     if route_name and route_name.endswith(".csv") and os.path.exists(route_name):
         control_stops_km = load_control_stops_km(route_name)
+        speed_limits_km = load_speed_limits_km(route_name)
     else:
         control_stops_km = list(OFFICIAL_CONTROL_STOPS_KM)
+        speed_limits_km = list(OFFICIAL_SPEED_LIMITS_KM)
     control_stops_km = [s for s in control_stops_km if s < args.distance][:args.stops]
 
     race = RaceConfig(
@@ -152,6 +164,13 @@ def main():
           f"  Crr={car.Crr}  bat={car.battery_capacity_kwh}kWh")
     print(f"  Solar: {car.panel_area}m² @ {car.panel_efficiency*100:.1f}%  "
           f"MPPT={car.mppt_efficiency*100:.0f}%  T_op={car.panel_temp_operating}°C")
+    if args.v_max is not None:
+        print(f"  Limit: v-max override {args.v_max:.0f} km/h (analysis only, not race-legal)")
+    else:
+        caps = " → ".join(f"{lim:.0f}@{km:.0f}km" for km, lim in speed_limits_km)
+        print(f"  Limit: posted {caps} (NT 130 / SA 110, §3.31.6)")
+    if args.target_soc is not None:
+        print(f"  Strat: whole-race battery plan → target final SoC {args.target_soc*100:.0f}%")
     print(f"{'='*60}")
 
     if args.sweep:
@@ -159,8 +178,20 @@ def main():
         return
 
     sim = RaceSimulator(car, race, route, fixed_speed_kmh=args.speed,
-                        control_stops_km=control_stops_km)
-    budget = sim.run(verbose=args.verbose)
+                        control_stops_km=control_stops_km,
+                        speed_limits_km=speed_limits_km,
+                        target_final_soc=args.target_soc,
+                        v_max_override_kmh=args.v_max)
+    if args.target_soc is not None and args.speed is None:
+        budget, scale, cap_limited = sim.run_to_target_soc(args.target_soc, verbose=True)
+        if cap_limited:
+            print(f"  NOTE: target {args.target_soc*100:.0f}% SoC not reachable within speed "
+                  f"limits — achievable floor is {budget.final_soc*100:.1f}% (discharge maxed).")
+        else:
+            print(f"  Calibrated whole-race discharge scale = {scale:.3f} "
+                  f"→ final SoC {budget.final_soc*100:.1f}%")
+    else:
+        budget = sim.run(verbose=args.verbose)
     budget.print_summary()
 
     if args.verbose:

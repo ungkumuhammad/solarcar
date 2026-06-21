@@ -5,6 +5,52 @@
 
 ---
 
+## 2026-06-21 — Whole-race battery strategy, posted speed limits, regen, HTML dashboard
+
+### Accomplished
+- **Whole-race battery strategy** (`--target-soc`): spreads battery budget across the whole
+  remaining race targeting a final SoC; `RaceSimulator.run_to_target_soc` calibrates the
+  discharge scale by bisection (speed cap makes it non-linear).
+- **Posted speed limits by location**: NT 130 / SA 110 km/h from `data/route.csv` (§3.31.6;
+  no derestricted section). `load_speed_limits_km` + `speed_limit_at_distance`; speed clipped
+  per position. Opt-in `--v-max` override for analysis only.
+- **Regen-to-battery**: added `gravity_power()` (raw m·g·sinθ·v); on a descent the surplus
+  beyond drag+rolling charges the pack (× regen×drivetrain η, capped). Populates
+  `regen_recovered_wh`.
+- **Interactive HTML dashboard** `index.html`: self-contained JS port of the full model
+  (Chart.js via CDN), live sliders for all car/race/strategy params, 5 charts + summary +
+  table. `.github/workflows/pages.yml` deploys to GitHub Pages. JS output verified to match
+  Python exactly (3022/116.2/100%; floor 95.7%; v-max150→20.2%; challenger 2931.7/93.1/16.4%).
+
+### Key Decisions / Findings
+- **Headline finding**: at legal speed limits the `optimized_regulation` car is
+  **solar-saturated** — at 110 km/h midday solar output *exceeds* demand, so the battery
+  fills to ~100% and the surplus is **unspendable**. Target 20% SoC is **unreachable**
+  legally (floor 95.7%); reaching 20% needs `--v-max 150` (illegal), giving avg 128.6 km/h.
+- Regen recovers ≈0 Wh on the gentle wsc route (verified: 62 kWh on a forced −8% slope, so
+  the path works) — only matters with steeper real elevation.
+- Per-territory caps lowered the default optimized result vs last entry: now finishes at
+  116.2 km/h / 100% SoC (was 123.3 / 66.4% under a flat-130 cap).
+- `RaceConfig.total_drive_hours` (31.5 h) overestimates actual drive time (~26 h) because the
+  car is faster than required; the calibration scale absorbs this.
+
+### Files Created / Modified
+- New: `index.html`, `.github/workflows/pages.yml`
+- Modified: `simulation/speed_strategy.py` (whole-race budget, posted-limit clip, gravity-based
+  demand), `simulation/simulator.py` (limits, regen, calibration runner), `losses/gradient.py`
+  (`gravity_power`), `environment/route.py` (speed-limit loader), `main.py` (`--target-soc`,
+  `--v-max` flags + wiring), `CLAUDE.md`, `docs/session-memory.md`
+
+### Project Status
+- Whole-race strategy, posted speed limits, regen-to-battery, interactive dashboard: **Complete**
+
+### Next Steps (waiting for instruction)
+- Location-based irradiance (wire `data/irradiance/`), sensitivity analysis, wind/cloud models.
+- Possible design follow-up: the car is over-powered for legal speeds — could trade
+  panel/battery for less mass, or bank time, rather than carry unusable surplus.
+
+---
+
 ## 2026-06-21 — Speed-profile visualization + location-based control stops
 
 ### Accomplished
