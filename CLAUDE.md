@@ -278,6 +278,45 @@ python main.py --cd 0.07 --mass 155 --route wsc
 
 ---
 
+## Verified Simulation Output (2026-06-21)
+
+### `python main.py --preset optimized_regulation --route wsc`
+```
+Distance covered:  3022.0 km  ← FINISHES
+Driving time:        27.0 h
+Average speed:      111.9 km/h
+Final battery SoC:   16.3%
+Energy in:         24835.5 Wh  (solar 20781 + battery 4054)
+Loss breakdown:    drag 81.8%, rolling 7.9%, aux 5.1%, drivetrain 2.4%
+```
+
+### `python main.py --route wsc`  (baseline challenger)
+```
+Distance covered:  2601.1 km  ← DOES NOT FINISH (86%)
+Driving time:        32.0 h
+Average speed:       81.3 km/h
+Final battery SoC:   18.2%
+Energy in:         26122.9 Wh  (solar 22722 + battery 3401)
+Loss breakdown:    drag 72.3%, rolling 9.0%, aux 9.2%, drivetrain 4.5%
+```
+
+---
+
+## Session History
+
+### Session 1 (2026-06-21)
+- Built full simulator from scratch: all 10 loss models, dynamic speed profile, WSC route
+- Key corrections made during session:
+  - Regulation-fixed: solar 4.0 m² and battery 5.5 kWh (CANNOT be changed, WSC rules)
+  - Drive window is 08:00–17:00 = 9h, NOT 10h; minus 2×30min stops = **8h effective**
+  - 3-day finish is IMPOSSIBLE under regulation energy (~111 km/h max; needs 125.9 km/h)
+  - **4-day race at 94.4 km/h is the correct feasible target**
+  - Removed `target_133kmh` preset (violated regulation limits)
+- Branch: `claude/solar-car-losses-tivgr7`
+- All code committed and pushed; clean state at session end
+
+---
+
 ## What to Build Next (suggested)
 1. **Matplotlib plots** — speed profile, SoC trace, power breakdown per day
 2. **CSV export** — time-series trace for external analysis
