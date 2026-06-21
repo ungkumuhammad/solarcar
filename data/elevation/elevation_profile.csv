@@ -1,0 +1,62 @@
+# Source: AWS elevation-tiles-prod (Terrain Tiles), zoom=9, CRS EPSG:3857
+# Dataset: SRTM, NED, ETOPO1 merged; s3://elevation-tiles-prod/geotiff/9/x/y.tif
+# Retrieved: 2026-06-21
+point_id,location_name,cumulative_km,latitude,longitude,elevation_m,source
+0,Darwin,0.0,-12.4634,130.8456,28.0,elevation-tiles-prod/geotiff/9
+1,interp_52km,51.7,-12.797033,131.081917,48.0,elevation-tiles-prod/geotiff/9
+2,interp_103km,103.3,-13.130667,131.318233,29.0,elevation-tiles-prod/geotiff/9
+3,interp_155km,155.0,-13.4643,131.55455,98.0,elevation-tiles-prod/geotiff/9
+4,interp_207km,206.7,-13.797933,131.790867,224.0,elevation-tiles-prod/geotiff/9
+5,interp_258km,258.3,-14.131567,132.027183,123.0,elevation-tiles-prod/geotiff/9
+6,Katherine,310.0,-14.4652,132.2635,108.0,elevation-tiles-prod/geotiff/9
+7,interp_364km,364.0,-14.8251,132.4872,155.0,elevation-tiles-prod/geotiff/9
+8,interp_418km,418.0,-15.185,132.7109,179.0,elevation-tiles-prod/geotiff/9
+9,interp_472km,472.0,-15.5449,132.9346,197.0,elevation-tiles-prod/geotiff/9
+10,interp_526km,526.0,-15.9048,133.1583,192.0,elevation-tiles-prod/geotiff/9
+11,Daly Waters,580.0,-16.2647,133.382,212.0,elevation-tiles-prod/geotiff/9
+12,interp_634km,634.0,-16.94224,133.5438,240.0,elevation-tiles-prod/geotiff/9
+13,interp_688km,688.0,-17.61978,133.7056,213.0,elevation-tiles-prod/geotiff/9
+14,interp_742km,742.0,-18.29732,133.8674,245.0,elevation-tiles-prod/geotiff/9
+15,interp_796km,796.0,-18.97486,134.0292,337.0,elevation-tiles-prod/geotiff/9
+16,Tennant Creek,850.0,-19.6524,134.191,364.0,elevation-tiles-prod/geotiff/9
+17,interp_904km,904.0,-20.03066,134.13036,365.0,elevation-tiles-prod/geotiff/9
+18,interp_958km,958.0,-20.40892,134.06972,336.0,elevation-tiles-prod/geotiff/9
+19,interp_1012km,1012.0,-20.78718,134.00908,369.0,elevation-tiles-prod/geotiff/9
+20,interp_1066km,1066.0,-21.16544,133.94844,444.0,elevation-tiles-prod/geotiff/9
+21,Barrow Creek,1120.0,-21.5437,133.8878,518.0,elevation-tiles-prod/geotiff/9
+22,interp_1176km,1176.0,-21.97456,133.88638,496.0,elevation-tiles-prod/geotiff/9
+23,interp_1232km,1232.0,-22.40542,133.88496,553.0,elevation-tiles-prod/geotiff/9
+24,interp_1288km,1288.0,-22.83628,133.88354,653.0,elevation-tiles-prod/geotiff/9
+25,interp_1344km,1344.0,-23.26714,133.88212,735.0,elevation-tiles-prod/geotiff/9
+26,Alice Springs,1400.0,-23.698,133.8807,581.0,elevation-tiles-prod/geotiff/9
+27,interp_1454km,1454.0,-24.12608,133.76348,550.0,elevation-tiles-prod/geotiff/9
+28,interp_1508km,1508.0,-24.55416,133.64626,493.0,elevation-tiles-prod/geotiff/9
+29,interp_1562km,1562.0,-24.98224,133.52904,406.0,elevation-tiles-prod/geotiff/9
+30,interp_1616km,1616.0,-25.41032,133.41182,415.0,elevation-tiles-prod/geotiff/9
+31,Kulgera,1670.0,-25.8384,133.2946,513.0,elevation-tiles-prod/geotiff/9
+32,interp_1723km,1722.9,-26.291986,133.503143,406.0,elevation-tiles-prod/geotiff/9
+33,interp_1776km,1775.7,-26.745571,133.711686,326.0,elevation-tiles-prod/geotiff/9
+34,interp_1829km,1828.6,-27.199157,133.920229,373.0,elevation-tiles-prod/geotiff/9
+35,interp_1881km,1881.4,-27.652743,134.128771,311.0,elevation-tiles-prod/geotiff/9
+36,interp_1934km,1934.3,-28.106329,134.337314,260.0,elevation-tiles-prod/geotiff/9
+37,interp_1987km,1987.1,-28.559914,134.545857,195.0,elevation-tiles-prod/geotiff/9
+38,Coober Pedy,2040.0,-29.0135,134.7544,225.0,elevation-tiles-prod/geotiff/9
+39,interp_2090km,2090.0,-29.40434,134.95358,186.0,elevation-tiles-prod/geotiff/9
+40,interp_2140km,2140.0,-29.79518,135.15276,194.0,elevation-tiles-prod/geotiff/9
+41,interp_2190km,2190.0,-30.18602,135.35194,168.0,elevation-tiles-prod/geotiff/9
+42,interp_2240km,2240.0,-30.57686,135.55112,133.0,elevation-tiles-prod/geotiff/9
+43,Glendambo,2290.0,-30.9677,135.7503,145.0,elevation-tiles-prod/geotiff/9
+44,interp_2342km,2342.0,-31.27276,136.15348,127.0,elevation-tiles-prod/geotiff/9
+45,interp_2394km,2394.0,-31.57782,136.55666,102.0,elevation-tiles-prod/geotiff/9
+46,interp_2446km,2446.0,-31.88288,136.95984,100.0,elevation-tiles-prod/geotiff/9
+47,interp_2498km,2498.0,-32.18794,137.36302,102.0,elevation-tiles-prod/geotiff/9
+48,Port Augusta,2550.0,-32.493,137.7662,13.0,elevation-tiles-prod/geotiff/9
+49,interp_2602km,2602.4,-32.763611,137.858922,-7.0,elevation-tiles-prod/geotiff/9
+50,interp_2655km,2654.9,-33.034222,137.951644,-1.0,elevation-tiles-prod/geotiff/9
+51,interp_2707km,2707.3,-33.304833,138.044367,29.0,elevation-tiles-prod/geotiff/9
+52,interp_2760km,2759.8,-33.575444,138.137089,318.0,elevation-tiles-prod/geotiff/9
+53,interp_2812km,2812.2,-33.846056,138.229811,94.0,elevation-tiles-prod/geotiff/9
+54,interp_2865km,2864.7,-34.116667,138.322533,45.0,elevation-tiles-prod/geotiff/9
+55,interp_2917km,2917.1,-34.387278,138.415256,30.0,elevation-tiles-prod/geotiff/9
+56,interp_2970km,2969.6,-34.657889,138.507978,6.0,elevation-tiles-prod/geotiff/9
+57,Adelaide,3022.0,-34.9285,138.6007,44.0,elevation-tiles-prod/geotiff/9
