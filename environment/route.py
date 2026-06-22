@@ -15,6 +15,13 @@ OFFICIAL_CONTROL_STOPS_KM = [310, 580, 850, 1120, 1400, 1670, 2040, 2290, 2550]
 # section exists (BWSC §3.31.6 penalises exceeding any posted limit).
 OFFICIAL_SPEED_LIMITS_KM = [(0.0, 130.0), (1690.0, 110.0)]
 
+# Analysis ceiling used when a goal-seek "leaves the speed limit open" so it can find a
+# result instead of stalling at the solar-saturated floor. Non-binding for the optimized
+# car (power demand scales as v³, so it never actually reaches this). Any plan that drives
+# above the posted limit is flagged via speed_limit_exceedance() — analysis only, not
+# race-legal (§3.31.6).
+OPEN_LIMIT_CEILING_KMH = 200.0
+
 
 def load_control_stops_km(csv_path: str) -> List[float]:
     """Read cumulative-km of control stops from a route CSV.
@@ -65,6 +72,43 @@ def speed_limit_at_distance(limits: List[tuple], distance_km: float) -> float:
         else:
             break
     return limit
+
+
+def speed_limit_exceedance(distances, speeds, driving, limits, tol_kmh: float = 0.5) -> dict:
+    """Scan a driven trace for steps that exceed the posted limit at their position.
+
+    Used to remark on a goal-seek solution that "left the speed limit open": it reports
+    how far the plan drives above the posted limit and the worst offence, so the result
+    can still be shown but clearly flagged as analysis-only (not race-legal, §3.31.6).
+
+    Returns a dict ``{steps, distance_km, max_speed_kmh, max_over_kmh}``. ``tol_kmh``
+    absorbs bisection rounding so a legal (clipped) run reports zero exceedance.
+    """
+    steps = 0
+    dist_over = 0.0
+    max_speed = 0.0
+    max_over = 0.0
+    prev_dist = None
+    for d, v, drv in zip(distances, speeds, driving):
+        if drv and v is not None:
+            # Evaluate the posted limit at the step's START position (the previous recorded
+            # distance), mirroring how the simulator clips speed — so a step that merely
+            # crosses a limit boundary isn't falsely flagged.
+            start_dist = prev_dist if prev_dist is not None else d
+            lim = speed_limit_at_distance(limits, start_dist)
+            if v > lim + tol_kmh:
+                steps += 1
+                if prev_dist is not None and d >= prev_dist:
+                    dist_over += d - prev_dist
+                max_speed = max(max_speed, v)
+                max_over = max(max_over, v - lim)
+        prev_dist = d
+    return {
+        "steps": steps,
+        "distance_km": round(dist_over, 1),
+        "max_speed_kmh": round(max_speed, 1),
+        "max_over_kmh": round(max_over, 1),
+    }
 
 
 @dataclass

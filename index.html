@@ -104,6 +104,7 @@ const CONTROL_STOPS_KM = [310,580,850,1120,1400,1670,2040,2290,2550];
 const CONTROL_STOP_NAMES = ['Katherine','Daly Waters','Tennant Creek','Barrow Creek',
   'Alice Springs','Kulgera','Coober Pedy','Glendambo','Port Augusta'];
 const SPEED_LIMITS = [[0,130],[1690,110]]; // [from_km, limit] — NT 130 / SA 110 (§3.31.6)
+const OPEN_CEILING = 200; // analysis ceiling when a goal-seek leaves the limit open (mirror route.py)
 
 const PRESETS = {
   challenger: { Cd:0.09, A:0.96, mass:180, Crr:0.0015, motorEff:0.96, gearEff:0.99, regenEff:0.72,
@@ -187,9 +188,12 @@ function simulate(c,p,scale){
       if(driving){
         const rho=airDensity(alt,p.ambient);
         const hToday=Math.max(0.01,p.winEnd-hour), hTotal=Math.max(0.01,totalDriveH-driveH);
-        const vCap=speedLimitAt(dist,p.vmaxOverride);
+        // Goal-seek "leave the limit open": swap the posted cap for a high analysis ceiling
+        // and lift the bisection ceiling so the limit isn't the binding constraint.
+        const vCap = p.openLimits ? OPEN_CEILING : speedLimitAt(dist,p.vmaxOverride);
+        const pEff = p.openLimits ? {...p, vmaxStrategy:Math.max(p.vmaxStrategy,OPEN_CEILING)} : p;
         let spd = p.fixedSpeed!=null ? Math.min(p.fixedSpeed,vCap)
-                  : computeSpeed(Psolar,soc,grade,alt,c,p,hToday,hTotal,p.target,scale,vCap);
+                  : computeSpeed(Psolar,soc,grade,alt,c,pEff,hToday,hTotal,p.target,scale,vCap);
         const v=spd/3.6;
         const Pdrag=dragPower(v,c,rho), Proll=rollPower(v,c,grade), Pgrav=gravityPower(v,grade,c.mass);
         const balance=Pdrag+Proll+Pgrav, Pmech=Math.max(0,balance);
@@ -221,13 +225,34 @@ function simulate(c,p,scale){
     energyIn: totals.solar + (c.battKwh*c.initSoc-batt)*1000 };
 }
 
-// Calibrate discharge scale so final SoC ≈ target (bisection; returns {res,scale,capLimited})
+// Scan a driven trace for steps above the posted limit (mirror route.py speed_limit_exceedance).
+// Evaluates the limit at each step's START position (previous recorded distance) so a step that
+// merely crosses a limit boundary isn't falsely flagged. Returns {steps,distKm,maxKmh,maxOverKmh}.
+function speedExceedance(T, limits, tol=0.5){
+  let steps=0, distOver=0, maxKmh=0, maxOver=0, prev=null;
+  for(let i=0;i<T.dist.length;i++){
+    const d=T.dist[i], v=T.speed[i], drv=T.driving[i];
+    if(drv){
+      const start = prev!=null ? prev : d;
+      let lim=limits[0][1]; for(const[k,l]of limits){ if(start>=k) lim=l; else break; }
+      if(v>lim+tol){ steps++; if(prev!=null && d>=prev) distOver+=d-prev;
+        maxKmh=Math.max(maxKmh,v); maxOver=Math.max(maxOver,v-lim); }
+    }
+    prev=d;
+  }
+  return { steps, distKm:+distOver.toFixed(1), maxKmh:+maxKmh.toFixed(1), maxOverKmh:+maxOver.toFixed(1) };
+}
+
+// Calibrate discharge scale so final SoC ≈ target (bisection; returns {res,scale,capLimited}).
+// The goal-seek leaves the posted limit open so the target is actually reachable (the optimized
+// car is solar-saturated at NT130/SA110 and otherwise floors at ~95.7%); exceedance is remarked.
 function calibrate(c,p,target){
+  const po={...p, openLimits:true};
   const maxScale=30;
-  let hi=simulate(c,p,maxScale);
+  let hi=simulate(c,po,maxScale);
   if(hi.finalSoc>target+0.01) return {res:hi,scale:maxScale,capLimited:true};
   let lo=0,h=maxScale,res=hi,mid=0;
-  for(let i=0;i<24;i++){ mid=(lo+h)/2; res=simulate(c,p,mid);
+  for(let i=0;i<24;i++){ mid=(lo+h)/2; res=simulate(c,po,mid);
     if(Math.abs(res.finalSoc-target)<=0.01) break;
     if(res.finalSoc>target) lo=mid; else h=mid; }
   return {res,scale:mid,capLimited:false};
@@ -365,7 +390,9 @@ function goalSeek(){
   if(keys.length===0){ resEl.className='result bad'; resEl.textContent='Pick at least one parameter for Goal-Seek to tune.'; return; }
   const [hh,mm]=GS.time.split(':').map(Number);
   const targetT=(GS.day-1)+(hh+(mm||0)/60)/24;
-  const mp={...PARAMS, target:null};                 // measure pure finish time (ignore target-SoC plan)
+  // measure pure finish time (ignore target-SoC plan); leave the limit open so an earlier
+  // finish isn't blocked by the posted cap — any exceedance is remarked below.
+  const mp={...PARAMS, target:null, openLimits:true};
   const CAR0={...CAR};
   // best bound per tunable param (improving direction); regulation caps are not in GOAL_SEEK_PARAMS
   const best={},dirs={}; for(const[key,,dir]of GOAL_SEEK_PARAMS){ const b=schemaBound(key); if(b){ best[key]=(dir==='min'?b.min:b.max); dirs[key]=dir; } }
@@ -382,8 +409,8 @@ function goalSeek(){
   if(!(fEnd.completed && fEnd.finishT<=targetT+1e-9)){
     resEl.className='result bad';
     resEl.innerHTML=`✗ Target ${fmtTime(targetT)} <b>not reachable</b> with the chosen parameters maxed — earliest is `+
-      `<b>${isFinite(fEnd.finishT)?fmtTime(fEnd.finishT):'no finish'}</b>. Enable more parameters or pick a later target. `+
-      `(Finishing earlier is ultimately capped by the posted limits NT 130 / SA 110.)`;
+      `<b>${isFinite(fEnd.finishT)?fmtTime(fEnd.finishT):'no finish'}</b> (speed limit left open). `+
+      `Enable more parameters or pick a later target.`;
     return;
   }
   // bisect for the smallest improvement k that still meets the target
@@ -394,10 +421,14 @@ function goalSeek(){
   for(const key of keys) spec[key]=gsSnap(key,cont[key],dirs[key]);   // snap to slider steps (toward better)
   const changes=keys.filter(k=>Math.abs(spec[k]-CAR0[k])>1e-9).map(k=>`${gsLabel(k)} ${fmtVal(k,CAR0[k])}→${fmtVal(k,spec[k])}`);
   const res2=simulate(spec,mp,1.0);
+  const exc=speedExceedance(res2.T,SPEED_LIMITS);
   CAR={...spec}; PRESET_NAME='custom'; buildControls(); run();        // push spec onto the sliders
   const out=document.getElementById('gsResult'); out.className='result ok';
+  const remark = exc.distKm>0
+    ? `<br><span style="color:#e0a030">⚠ Needs to exceed the posted limit: above NT130/SA110 for ${exc.distKm} km, peak ${exc.maxKmh} km/h (+${exc.maxOverKmh} over) — analysis only, not race-legal (§3.31.6).</span>`
+    : '';
   out.innerHTML=`✓ Finishes <b>${fmtTime(res2.finishT)}</b> (target ${fmtTime(targetT)}). Spec applied — solar 6 m² &amp; battery untouched:<br>`+
-    (changes.length?changes.join('; '):'already met without changes');
+    (changes.length?changes.join('; '):'already met without changes')+remark;
 }
 
 let debTimer=null; function debounced(){ clearTimeout(debTimer); debTimer=setTimeout(run,120); }
@@ -418,9 +449,13 @@ function run(){
   const note=document.getElementById('note');
   if(PARAMS.target!=null){
     note.style.display='block';
+    const exc=speedExceedance(T,SPEED_LIMITS);
+    const remark = exc.distKm>0
+      ? ` <span style="color:#e0a030">⚠ Speed limit left open for goal-seek: drives above NT130/SA110 for <b>${exc.distKm} km</b>, peak <b>${exc.maxKmh} km/h</b> (+${exc.maxOverKmh} over) — analysis only, not race-legal (§3.31.6).</span>`
+      : '';
     note.innerHTML = capLimited
-      ? `⚠️ Target ${Math.round(PARAMS.target*100)}% SoC <b>not reachable</b> within the speed cap — achievable floor is <b>${(r.finalSoc*100).toFixed(1)}%</b> (the car is solar-saturated; it can't spend the surplus without exceeding the limit).`
-      : `✓ Whole-race plan calibrated (discharge scale ${scale.toFixed(2)}) → final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b>.`;
+      ? `⚠️ Target ${Math.round(PARAMS.target*100)}% SoC <b>not reachable</b> even with the limit left open — achievable floor is <b>${(r.finalSoc*100).toFixed(1)}%</b> (discharge maxed).`
+      : `✓ Whole-race plan calibrated (discharge scale ${scale.toFixed(2)}) → final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b>.`+remark;
   } else note.style.display='none';
 
   // cards

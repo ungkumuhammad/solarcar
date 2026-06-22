@@ -166,6 +166,9 @@ def main():
           f"MPPT={car.mppt_efficiency*100:.0f}%  T_op={car.panel_temp_operating}°C")
     if args.v_max is not None:
         print(f"  Limit: v-max override {args.v_max:.0f} km/h (analysis only, not race-legal)")
+    elif args.target_soc is not None:
+        print(f"  Limit: left open for goal-seek (posted NT 130 / SA 110 ignored; "
+              f"any exceedance is remarked, analysis only)")
     else:
         caps = " → ".join(f"{lim:.0f}@{km:.0f}km" for km, lim in speed_limits_km)
         print(f"  Limit: posted {caps} (NT 130 / SA 110, §3.31.6)")
@@ -185,11 +188,11 @@ def main():
     if args.target_soc is not None and args.speed is None:
         budget, scale, cap_limited = sim.run_to_target_soc(args.target_soc, verbose=True)
         if cap_limited:
-            print(f"  NOTE: target {args.target_soc*100:.0f}% SoC not reachable within speed "
-                  f"limits — achievable floor is {budget.final_soc*100:.1f}% (discharge maxed).")
+            print(f"  NOTE: target {args.target_soc*100:.0f}% SoC not reachable even with the "
+                  f"limit left open — achievable floor is {budget.final_soc*100:.1f}% (discharge maxed).")
         else:
             print(f"  Calibrated whole-race discharge scale = {scale:.3f} "
-                  f"→ final SoC {budget.final_soc*100:.1f}%")
+                  f"→ final SoC {budget.final_soc*100:.1f}% (speed limit left open for goal-seek)")
     else:
         budget = sim.run(verbose=args.verbose)
     budget.print_summary()
