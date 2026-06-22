@@ -11,11 +11,17 @@ Usage examples:
 import argparse
 import sys
 
+import os
+
 from models.car import CarConfig
 from models.race import RaceConfig
-from environment.route import RouteProfile
+from environment.route import (
+    RouteProfile, load_control_stops_km, OFFICIAL_CONTROL_STOPS_KM,
+    load_speed_limits_km, OFFICIAL_SPEED_LIMITS_KM,
+)
 from simulation.simulator import RaceSimulator
 from simulation.energy_budget import EnergyBudget
+from simulation import tables
 
 
 def build_car(args) -> CarConfig:
@@ -91,7 +97,8 @@ def main():
                         help="Fixed target speed km/h (dynamic if omitted)")
     parser.add_argument("--distance", type=float, default=3022.0, help="Race distance km")
     parser.add_argument("--days", type=int, default=4, help="Race days (3-day NOT feasible under regulation)")
-    parser.add_argument("--stops", type=int, default=2, help="Control stops per day")
+    parser.add_argument("--stops", type=int, default=9,
+                        help="Number of control stops (taken at checkpoint locations)")
     parser.add_argument("--stop-min", type=float, default=30.0, help="Minutes per control stop")
     parser.add_argument("--preset", choices=["challenger", "optimized_regulation"],
                         default="challenger", help="Car preset")
@@ -99,6 +106,20 @@ def main():
     parser.add_argument("--route", default="flat", help="'flat', 'wsc', or path to CSV")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--sweep", action="store_true", help="Sweep speeds 40–130 km/h")
+    # Visualisation / export
+    parser.add_argument("--plot", action="store_true", help="Save dashboard + per-day PNGs")
+    parser.add_argument("--table", action="store_true",
+                        help="Print speed-profile table (one row per substantial speed change)")
+    parser.add_argument("--csv", action="store_true", help="Export speed table + full trace CSVs")
+    parser.add_argument("--out", default="output", help="Output directory for plots/CSVs")
+    parser.add_argument("--table-threshold", type=float, default=5.0, dest="table_threshold",
+                        help="km/h change that counts as a new table row")
+    # Strategy
+    parser.add_argument("--target-soc", type=float, default=None, dest="target_soc",
+                        help="Target final battery SoC (0-1), e.g. 0.20. Enables the "
+                             "whole-race battery strategy that spends surplus on speed.")
+    parser.add_argument("--v-max", type=float, default=None, dest="v_max",
+                        help="Override posted speed limit cap km/h (analysis only, not race-legal)")
     # Parameter overrides
     parser.add_argument("--cd", type=float, default=None)
     parser.add_argument("--frontal-area", type=float, default=None, dest="frontal_area")
@@ -111,38 +132,86 @@ def main():
     args = parser.parse_args()
 
     car = build_car(args)
+    route = build_route(args)
+
+    # Control-stop positions + posted speed limits: from a CSV route if given,
+    # else the official BWSC stops / NT-SA speed limits.
+    route_name = getattr(args, "route", "flat")
+    if route_name and route_name.endswith(".csv") and os.path.exists(route_name):
+        control_stops_km = load_control_stops_km(route_name)
+        speed_limits_km = load_speed_limits_km(route_name)
+    else:
+        control_stops_km = list(OFFICIAL_CONTROL_STOPS_KM)
+        speed_limits_km = list(OFFICIAL_SPEED_LIMITS_KM)
+    control_stops_km = [s for s in control_stops_km if s < args.distance][:args.stops]
+
     race = RaceConfig(
         distance_km=args.distance,
         race_days=args.days,
-        control_stops_per_day=args.stops,
+        num_control_stops=len(control_stops_km),
         control_stop_duration_min=args.stop_min,
     )
-    route = build_route(args)
 
     print(f"\n{'='*60}")
     print(f"  Solar Car Race Simulator")
     print(f"  Race:  {race.distance_km:.0f} km  |  {race.race_days} days")
-    print(f"  Time:  {race.regulation_window_h:.0f}h window (08:00–17:00)  "
-          f"- {race.control_stop_hours_per_day*60:.0f} min stops  "
-          f"= {race.drive_hours_per_day:.1f} h/day effective")
+    print(f"  Time:  {race.regulation_window_h:.0f}h window/day (08:00–17:00)  |  "
+          f"{race.num_control_stops} control stops × {race.control_stop_duration_min:.0f} min "
+          f"= {race.total_control_stop_hours:.1f} h total")
     print(f"  Need:  {race.required_avg_speed():.1f} km/h avg  "
-          f"over {race.total_drive_hours:.0f} h total")
+          f"over {race.total_drive_hours:.1f} h effective drive time")
     print(f"  Car:   Cd={car.Cd}  A={car.frontal_area}m²  m={car.mass_kg}kg"
           f"  Crr={car.Crr}  bat={car.battery_capacity_kwh}kWh")
     print(f"  Solar: {car.panel_area}m² @ {car.panel_efficiency*100:.1f}%  "
           f"MPPT={car.mppt_efficiency*100:.0f}%  T_op={car.panel_temp_operating}°C")
+    if args.v_max is not None:
+        print(f"  Limit: v-max override {args.v_max:.0f} km/h (analysis only, not race-legal)")
+    else:
+        caps = " → ".join(f"{lim:.0f}@{km:.0f}km" for km, lim in speed_limits_km)
+        print(f"  Limit: posted {caps} (NT 130 / SA 110, §3.31.6)")
+    if args.target_soc is not None:
+        print(f"  Strat: whole-race battery plan → target final SoC {args.target_soc*100:.0f}%")
     print(f"{'='*60}")
 
     if args.sweep:
         run_sweep(car, race, route, range(40, 135, 5))
         return
 
-    sim = RaceSimulator(car, race, route, fixed_speed_kmh=args.speed)
-    budget = sim.run(verbose=args.verbose)
+    sim = RaceSimulator(car, race, route, fixed_speed_kmh=args.speed,
+                        control_stops_km=control_stops_km,
+                        speed_limits_km=speed_limits_km,
+                        target_final_soc=args.target_soc,
+                        v_max_override_kmh=args.v_max)
+    if args.target_soc is not None and args.speed is None:
+        budget, scale, cap_limited = sim.run_to_target_soc(args.target_soc, verbose=True)
+        if cap_limited:
+            print(f"  NOTE: target {args.target_soc*100:.0f}% SoC not reachable within speed "
+                  f"limits — achievable floor is {budget.final_soc*100:.1f}% (discharge maxed).")
+        else:
+            print(f"  Calibrated whole-race discharge scale = {scale:.3f} "
+                  f"→ final SoC {budget.final_soc*100:.1f}%")
+    else:
+        budget = sim.run(verbose=args.verbose)
     budget.print_summary()
 
     if args.verbose:
         print_day_table(budget)
+
+    if args.table:
+        tables.print_speed_profile_table(budget, threshold_kmh=args.table_threshold)
+
+    if args.csv:
+        os.makedirs(args.out, exist_ok=True)
+        table_path = os.path.join(args.out, "speed_table.csv")
+        trace_path = os.path.join(args.out, "full_trace.csv")
+        tables.write_table_csv(budget, table_path, threshold_kmh=args.table_threshold)
+        tables.write_full_trace_csv(budget, trace_path)
+        print(f"\n  CSV written: {table_path}, {trace_path}")
+
+    if args.plot:
+        from simulation.plots import generate_plots
+        paths = generate_plots(budget, car, race, outdir=args.out)
+        print(f"  Plots written: {', '.join(paths)}")
 
 
 if __name__ == "__main__":

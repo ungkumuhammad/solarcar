@@ -28,12 +28,55 @@ class EnergyBudget:
     panel_temp_loss_wh: float = 0.0    # reference: what panel would produce at STC vs actual
     mppt_loss_wh: float = 0.0
 
-    # Time-series traces for plotting
-    time_trace: list = field(default_factory=list)    # decimal hour of day
-    speed_trace: list = field(default_factory=list)   # km/h
+    # Time-series traces for plotting (all aligned, one entry per recorded timestep)
+    time_trace: list = field(default_factory=list)    # elapsed time as day + hour/24
+    speed_trace: list = field(default_factory=list)   # km/h (0 while parked/stopped)
     soc_trace: list = field(default_factory=list)     # fraction 0-1
-    solar_trace: list = field(default_factory=list)   # W
-    demand_trace: list = field(default_factory=list)  # W
+    solar_trace: list = field(default_factory=list)   # W (solar input)
+    demand_trace: list = field(default_factory=list)  # W (total electrical demand)
+
+    # Extended traces (driving and parked/charging steps)
+    distance_trace: list = field(default_factory=list)    # cumulative km
+    day_trace: list = field(default_factory=list)         # race day number (1-based)
+    irradiance_trace: list = field(default_factory=list)  # W/m²
+    grade_trace: list = field(default_factory=list)       # % (positive uphill)
+    altitude_trace: list = field(default_factory=list)    # m
+    driving_trace: list = field(default_factory=list)     # bool: True=driving
+    control_stop_trace: list = field(default_factory=list)  # bool: True=control-stop halt
+
+    # Per-loss instantaneous power traces (W); zero while parked/stopped
+    drag_w_trace: list = field(default_factory=list)
+    rolling_w_trace: list = field(default_factory=list)
+    gradient_w_trace: list = field(default_factory=list)
+    drivetrain_w_trace: list = field(default_factory=list)
+    aux_w_trace: list = field(default_factory=list)
+    electrical_w_trace: list = field(default_factory=list)  # wiring + battery internal
+
+    def record_step(
+        self, *, time, day, distance_km, speed_kmh, soc, solar_w, demand_w,
+        irradiance, grade_pct, altitude_m, driving, control_stop=False,
+        drag_w=0.0, rolling_w=0.0, gradient_w=0.0, drivetrain_w=0.0,
+        aux_w=0.0, electrical_w=0.0,
+    ) -> None:
+        """Append one aligned row to every trace list (driving or parked step)."""
+        self.time_trace.append(round(time, 4))
+        self.day_trace.append(day)
+        self.distance_trace.append(round(distance_km, 2))
+        self.speed_trace.append(round(speed_kmh, 2))
+        self.soc_trace.append(round(soc, 4))
+        self.solar_trace.append(round(solar_w, 1))
+        self.demand_trace.append(round(demand_w, 1))
+        self.irradiance_trace.append(round(irradiance, 1))
+        self.grade_trace.append(round(grade_pct, 3))
+        self.altitude_trace.append(round(altitude_m, 1))
+        self.driving_trace.append(driving)
+        self.control_stop_trace.append(control_stop)
+        self.drag_w_trace.append(round(drag_w, 1))
+        self.rolling_w_trace.append(round(rolling_w, 1))
+        self.gradient_w_trace.append(round(gradient_w, 1))
+        self.drivetrain_w_trace.append(round(drivetrain_w, 1))
+        self.aux_w_trace.append(round(aux_w, 1))
+        self.electrical_w_trace.append(round(electrical_w, 1))
 
     def total_energy_consumed_wh(self) -> float:
         return (
