@@ -16,13 +16,14 @@
 <style>
   :root { --bg:#0f1419; --panel:#1a2129; --ink:#e6edf3; --mut:#8b98a5; --acc:#4aa8ff; --line:#2a333d; }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; overflow:hidden; }
   header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; }
   header .sub { color:var(--mut); font-size:12px; }
-  .wrap { display:grid; grid-template-columns:320px 1fr; gap:0; align-items:start; }
-  .controls { padding:14px 16px; border-right:1px solid var(--line); height:calc(100vh - 52px); overflow-y:auto; }
-  .main { padding:16px 20px; }
+  /* sidebar and main scroll INDEPENDENTLY so Preset & strategy stays in view while the main panel scrolls */
+  .wrap { display:grid; grid-template-columns:320px 1fr; gap:0; align-items:start; height:calc(100vh - 52px); }
+  .controls { padding:14px 16px; border-right:1px solid var(--line); height:100%; overflow-y:auto; }
+  .main { padding:16px 20px; height:100%; overflow-y:auto; }
   .group { margin-bottom:14px; }
   .group h3 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); margin:0 0 8px; }
   .ctl { margin-bottom:9px; }
@@ -51,6 +52,16 @@
   td.note, th.note { text-align:left; color:var(--acc); }
   tr.stop td { color:#d29922; }
   .toggle { display:flex; align-items:center; gap:6px; font-size:12px; }
+  /* Goal-Seek */
+  .gs { background:#16202a; border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:14px; }
+  .gs h3 { margin:0 0 8px; }
+  .gs .gsrow { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .gs .gsrow label { font-size:12px; color:var(--mut); white-space:nowrap; }
+  .gs input[type=time], .gs select { padding:5px 6px; font-size:12px; }
+  .checklist { display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; margin:6px 0 8px; }
+  .checklist label { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--ink); }
+  .gs .result { font-size:12px; color:#cdd9e5; margin-top:8px; line-height:1.5; }
+  .gs .result.ok { color:#3fb950; } .gs .result.bad { color:#f0b429; }
 </style>
 </head>
 <body>
@@ -71,6 +82,10 @@
       <div class="chartbox wide"><h4>Route elevation (m) at car position</h4><canvas id="cElev"></canvas></div>
     </div>
     <div class="tablebox">
+      <h4 style="margin:0 0 8px;color:var(--mut);font-size:12px">Per-day summary — battery SoC start/end, distance &amp; average speed</h4>
+      <div id="dayTable"></div>
+    </div>
+    <div class="tablebox">
       <h4 style="margin:0 0 8px;color:var(--mut);font-size:12px">Speed profile — one row per substantial speed change (+ day starts, control stops, finish)</h4>
       <div id="table"></div>
     </div>
@@ -85,6 +100,9 @@ const WSC_SEGMENTS = [ // [distance_km, grade_%, altitude_m]
   [200,0.3,400],[250,-0.5,200],[300,0.2,250],[472,-0.3,50],
 ];
 const CONTROL_STOPS_KM = [310,580,850,1120,1400,1670,2040,2290,2550];
+// Checkpoint names parallel to CONTROL_STOPS_KM (from data/route.csv)
+const CONTROL_STOP_NAMES = ['Katherine','Daly Waters','Tennant Creek','Barrow Creek',
+  'Alice Springs','Kulgera','Coober Pedy','Glendambo','Port Augusta'];
 const SPEED_LIMITS = [[0,130],[1690,110]]; // [from_km, limit] — NT 130 / SA 110 (§3.31.6)
 
 const PRESETS = {
@@ -145,7 +163,7 @@ function simulate(c,p,scale){
   const dtH=p.dt/60, batMin=c.battKwh*0.10, maxRegen=3000;
   const totalDriveH=p.winStart!=null ? (p.winEnd-p.winStart)*p.days - p.numStops*p.stopMin/60 : 0;
   const stops=CONTROL_STOPS_KM.filter(s=>s<p.distance).slice(0,p.numStops);
-  let batt=c.battKwh*c.initSoc, dist=0, nextStop=0, stopRem=0, driveH=0;
+  let batt=c.battKwh*c.initSoc, dist=0, nextStop=0, stopRem=0, driveH=0, finishT=Infinity;
   const T={time:[],day:[],dist:[],speed:[],soc:[],solar:[],demand:[],irr:[],grade:[],alt:[],driving:[],stop:[],
            drag:[],roll:[],grad:[],drive:[],aux:[],elec:[],regen:[]};
   let totals={drag:0,roll:0,grad:0,drive:0,wire:0,bint:0,aux:0,regen:0,solar:0};
@@ -192,13 +210,13 @@ function simulate(c,p,scale){
           rec({t:day+hour/24,d:day+1,dist,spd:0,soc,solar:Psolar,dem:Paux,irr,gr:grade,alt,drv:false,st:serving,auxw:Paux}); }
       }
       totals.solar+=Psolar*dtH;
-      if(dist>=p.distance){ completed=true; break; }
+      if(dist>=p.distance){ completed=true; finishT=day+(hour+dtH)/24; break; }
     }
     if(completed) break;
   }
   const finalSoc=batt/c.battKwh;
   const consumed=totals.drag+totals.roll+Math.max(0,totals.grad)+totals.drive+totals.wire+totals.bint+totals.aux;
-  return { T, totals, finalSoc, completed, dist, driveH,
+  return { T, totals, finalSoc, completed, dist, driveH, finishT,
     avgSpeed: driveH>0?dist/driveH:0, consumed,
     energyIn: totals.solar + (c.battKwh*c.initSoc-batt)*1000 };
 }
@@ -232,12 +250,29 @@ const PARAM_SCHEMA = [
     ['auxDrive','Aux driving (W)',20,80,1],['auxPark','Aux parked (W)',5,20,1]]],
   ['Race & strategy', [
     ['days','Race days',3,6,1],['numStops','Control stops',0,9,1],['stopMin','Stop minutes',0,45,5]]],
+  ['Display', [
+    ['tableThr','Speed-table threshold (km/h)',4,25,1]]],
 ];
 let CAR = {...PRESETS.optimized};
+let PRESET_NAME = 'optimized';
 let PARAMS = { distance:RACE.distance, days:RACE.days, winStart:RACE.winStart, winEnd:RACE.winEnd,
   numStops:RACE.numStops, stopMin:RACE.stopMin, dt:RACE.dt, ambient:RACE.ambient, sunrise:RACE.sunrise,
   sunset:RACE.sunset, peak:RACE.peak, cloud:RACE.cloud, vmin:RACE.vmin, vmax:RACE.vmax, vmaxStrategy:RACE.vmax,
-  fixedSpeed:null, target:null, vmaxOverride:null };
+  fixedSpeed:null, target:null, vmaxOverride:null, tableThr:12 };
+
+// Goal-Seek adjustable (non-regulation) params: [key, label, improve-direction].
+// 'min' = lower is better, 'max' = higher is better. Bounds come from PARAM_SCHEMA.
+// panelArea & battKwh are deliberately ABSENT — they are regulation caps (§2.4.2 / §2.5.2).
+const GOAL_SEEK_PARAMS = [
+  ['Cd','Cd','min'],['A','Frontal area','min'],['mass','Mass','min'],['Crr','Crr','min'],
+  ['motorEff','Motor η','max'],['gearEff','Gear η','max'],['regenEff','Regen η','max'],
+  ['busV','Bus V','max'],['wireR','Wire R','min'],['battR','Battery R','min'],
+  ['panelEff','Panel η','max'],['tOp','Panel temp','min'],['mppt','MPPT η','max'],
+  ['auxDrive','Aux (driving)','min'],['initSoc','Initial SoC','max'],
+];
+const GS_DEFAULT_CHECKED = new Set(['Cd','A','mass']); // sensible starting subset
+function schemaBound(key){ for(const[,items]of PARAM_SCHEMA) for(const it of items) if(it[0]===key) return {min:it[2],max:it[3],step:it[4]}; return null; }
+let GS = { day:RACE.days, time:'14:00', checked:new Set(GS_DEFAULT_CHECKED) };
 
 function buildControls(){
   const root=document.getElementById('controls'); root.innerHTML='';
@@ -245,7 +280,7 @@ function buildControls(){
   const g0=document.createElement('div'); g0.className='group';
   g0.innerHTML=`<h3>Preset & strategy</h3>
     <div class="ctl"><div class="row">
-      <select id="preset"><option value="optimized">Optimized (regulation-best)</option><option value="challenger">Challenger (baseline)</option></select>
+      <select id="preset"><option value="optimized">Optimized (regulation-best)</option><option value="challenger">Challenger (baseline)</option><option value="custom">Custom (hand-tuned)</option></select>
     </div></div>
     <div class="ctl"><label class="toggle"><input type="checkbox" id="useTarget"> Whole-race plan → target SoC</label>
       <input type="range" id="targetSoc" min="0.05" max="0.9" step="0.01" value="0.20" disabled>
@@ -254,6 +289,7 @@ function buildControls(){
       <input type="range" id="vmaxOv" min="110" max="180" step="5" value="150" disabled>
       <label><span>v-max override</span><span class="val" id="vmaxOvV">150</span></label></div>`;
   root.appendChild(g0);
+  buildGoalSeek(root);
   for(const [title,items] of PARAM_SCHEMA){
     const g=document.createElement('div'); g.className='group';
     g.innerHTML=`<h3>${title}</h3>`;
@@ -268,11 +304,18 @@ function buildControls(){
     root.appendChild(g);
   }
   // wire events
-  document.getElementById('preset').addEventListener('change',e=>{ CAR={...PRESETS[e.target.value]}; buildControls(); run(); });
+  const presetSel=document.getElementById('preset');
+  presetSel.value=PRESET_NAME;                         // restore selection after rebuild (was the dropdown bug)
+  presetSel.addEventListener('change',e=>{
+    if(e.target.value==='custom'){ PRESET_NAME='custom'; return; } // 'custom' is a state, not a preset
+    PRESET_NAME=e.target.value; CAR={...PRESETS[PRESET_NAME]}; buildControls(); run();
+  });
   for(const [,items] of PARAM_SCHEMA) for(const [key] of items){
     document.getElementById('r_'+key).addEventListener('input',e=>{
       const v=parseFloat(e.target.value);
-      if(key in CAR) CAR[key]=v; else PARAMS[key]=v;
+      if(key in CAR){ CAR[key]=v;                       // hand-tuning a car param → mark preset Custom
+        if(PRESET_NAME!=='custom'){ PRESET_NAME='custom'; presetSel.value='custom'; } }
+      else PARAMS[key]=v;
       document.getElementById('v_'+key).textContent=fmtVal(key,v); debounced();
     });
   }
@@ -287,6 +330,75 @@ function buildControls(){
 }
 function fmtVal(key,v){ if(['initSoc','mppt','motorEff','gearEff','regenEff','panelEff'].includes(key)) return (v*100).toFixed(1)+'%';
   if(['Cd','Crr'].includes(key)) return (+v).toFixed(key==='Crr'?4:3); return (+v).toString(); }
+
+// ───────────────────────── Goal-Seek ─────────────────────────
+function gsLabel(key){ for(const[k,l]of GOAL_SEEK_PARAMS) if(k===key) return l; return key; }
+function gsSnap(key,val,dir){ const b=schemaBound(key); if(!b) return val; const step=b.step||1;
+  // round in the IMPROVING direction so snapping never loses the achieved margin
+  const n=dir==='min'?Math.floor(val/step)*step:Math.ceil(val/step)*step;
+  return Math.max(b.min,Math.min(b.max,n)); }
+
+function buildGoalSeek(root){
+  const g=document.createElement('div'); g.className='gs';
+  let dayOpts=''; for(let d=1; d<=PARAMS.days; d++) dayOpts+=`<option value="${d}" ${d===Math.min(GS.day,PARAMS.days)?'selected':''}>Day ${d}</option>`;
+  const checks=GOAL_SEEK_PARAMS.map(([key,label])=>
+    `<label><input type="checkbox" class="gschk" data-key="${key}" ${GS.checked.has(key)?'checked':''}>${label}</label>`).join('');
+  g.innerHTML=`<h3>Goal-Seek — hit a finish time</h3>
+    <div class="gsrow"><label>Finish by</label>
+      <select id="gsDay">${dayOpts}</select>
+      <input type="time" id="gsTime" value="${GS.time}" step="300"></div>
+    <div style="font-size:11px;color:var(--mut);margin-bottom:4px">Parameters Goal-Seek may tune (solar area &amp; battery stay at the regulation caps):</div>
+    <div class="checklist">${checks}</div>
+    <button class="primary" id="gsSolve">Solve</button>
+    <div class="result" id="gsResult"></div>`;
+  root.appendChild(g);
+  g.querySelector('#gsDay').addEventListener('change',e=>GS.day=parseInt(e.target.value));
+  g.querySelector('#gsTime').addEventListener('change',e=>GS.time=e.target.value);
+  g.querySelectorAll('.gschk').forEach(cb=>cb.addEventListener('change',e=>{
+    if(e.target.checked) GS.checked.add(e.target.dataset.key); else GS.checked.delete(e.target.dataset.key); }));
+  g.querySelector('#gsSolve').addEventListener('click',goalSeek);
+}
+
+function goalSeek(){
+  const resEl=document.getElementById('gsResult');
+  const keys=[...GS.checked];
+  if(keys.length===0){ resEl.className='result bad'; resEl.textContent='Pick at least one parameter for Goal-Seek to tune.'; return; }
+  const [hh,mm]=GS.time.split(':').map(Number);
+  const targetT=(GS.day-1)+(hh+(mm||0)/60)/24;
+  const mp={...PARAMS, target:null};                 // measure pure finish time (ignore target-SoC plan)
+  const CAR0={...CAR};
+  // best bound per tunable param (improving direction); regulation caps are not in GOAL_SEEK_PARAMS
+  const best={},dirs={}; for(const[key,,dir]of GOAL_SEEK_PARAMS){ const b=schemaBound(key); if(b){ best[key]=(dir==='min'?b.min:b.max); dirs[key]=dir; } }
+  const applyK=k=>{ const c={...CAR0}; for(const key of keys) if(key in best) c[key]=CAR0[key]+(best[key]-CAR0[key])*k; return c; };
+  const finAt=k=>simulate(applyK(k),mp,1.0).finishT;
+
+  const f0=simulate(CAR0,mp,1.0);
+  if(f0.completed && f0.finishT<=targetT+1e-9){
+    resEl.className='result ok';
+    resEl.innerHTML=`✓ Current spec already finishes <b>${fmtTime(f0.finishT)}</b> — at/before your ${fmtTime(targetT)} target. No change needed.`;
+    return;
+  }
+  const fEnd=simulate(applyK(1),mp,1.0);
+  if(!(fEnd.completed && fEnd.finishT<=targetT+1e-9)){
+    resEl.className='result bad';
+    resEl.innerHTML=`✗ Target ${fmtTime(targetT)} <b>not reachable</b> with the chosen parameters maxed — earliest is `+
+      `<b>${isFinite(fEnd.finishT)?fmtTime(fEnd.finishT):'no finish'}</b>. Enable more parameters or pick a later target. `+
+      `(Finishing earlier is ultimately capped by the posted limits NT 130 / SA 110.)`;
+    return;
+  }
+  // bisect for the smallest improvement k that still meets the target
+  let lo=0,hi=1,kBest=1;
+  for(let i=0;i<28;i++){ const mid=(lo+hi)/2, ft=finAt(mid);
+    if(isFinite(ft)&&ft<=targetT+1e-9){ kBest=mid; hi=mid; } else lo=mid; }
+  const cont=applyK(kBest), spec={...cont};
+  for(const key of keys) spec[key]=gsSnap(key,cont[key],dirs[key]);   // snap to slider steps (toward better)
+  const changes=keys.filter(k=>Math.abs(spec[k]-CAR0[k])>1e-9).map(k=>`${gsLabel(k)} ${fmtVal(k,CAR0[k])}→${fmtVal(k,spec[k])}`);
+  const res2=simulate(spec,mp,1.0);
+  CAR={...spec}; PRESET_NAME='custom'; buildControls(); run();        // push spec onto the sliders
+  const out=document.getElementById('gsResult'); out.className='result ok';
+  out.innerHTML=`✓ Finishes <b>${fmtTime(res2.finishT)}</b> (target ${fmtTime(targetT)}). Spec applied — solar 6 m² &amp; battery untouched:<br>`+
+    (changes.length?changes.join('; '):'already met without changes');
+}
 
 let debTimer=null; function debounced(){ clearTimeout(debTimer); debTimer=setTimeout(run,120); }
 
@@ -329,7 +441,11 @@ function run(){
     scales:{x:baseX, y:yAx()}, elements:{point:{radius:0}}, ...ex });
   const pts=arr=>x.map((t,i)=>({x:t,y:arr[i]}));
 
-  mkChart('cSpeed',{type:'line',data:{datasets:[{data:pts(T.speed),borderColor:'#4aa8ff',borderWidth:1.3,fill:true,backgroundColor:'rgba(74,168,255,.12)'}]},options:baseOpts()});
+  // markers on the speed line exactly where speed changes substantially (same points as the table)
+  const cpSet=new Set(speedChangePoints(T,PARAMS.tableThr));
+  const spdRadii=x.map((t,i)=>cpSet.has(i)?3.5:0);
+  mkChart('cSpeed',{type:'line',data:{datasets:[{data:pts(T.speed),borderColor:'#4aa8ff',borderWidth:1.3,fill:true,backgroundColor:'rgba(74,168,255,.12)',
+    pointRadius:spdRadii,pointHoverRadius:spdRadii.map(r=>r?5:0),pointBackgroundColor:'#ffd166',pointBorderColor:'#ffd166'}]},options:baseOpts()});
   mkChart('cSoc',{type:'line',data:{datasets:[{data:pts(T.soc.map(s=>s*100)),borderColor:'#3fb950',borderWidth:1.5,fill:true,backgroundColor:'rgba(63,185,80,.12)'}]},options:baseOpts({scales:{x:baseX,y:{...yAx('%'),min:0,max:100}}})});
   mkChart('cIrr',{type:'line',data:{datasets:[{data:pts(T.irr),borderColor:'#ff7f0e',borderWidth:1.2,fill:true,backgroundColor:'rgba(255,127,14,.12)'}]},options:baseOpts()});
   mkChart('cElev',{type:'line',data:{datasets:[{data:pts(T.alt),borderColor:'#8c564b',borderWidth:1.3,fill:true,backgroundColor:'rgba(140,86,75,.18)'}]},options:baseOpts()});
@@ -341,32 +457,68 @@ function run(){
       {label:'Solar',data:pts(T.solar),borderColor:'#fff',borderWidth:1.2,fill:false,stack:'sun'}]},
     options:baseOpts({plugins:{legend:{display:true,labels:{color:'#8b98a5',boxWidth:10,font:{size:10}}}},scales:{x:baseX,y:{...yAx('W'),stacked:true}}})});
 
+  renderDayTable(T);
   renderTable(T);
 }
 function card(k,v,cls){ return `<div class="card"><div class="k">${k}</div><div class="v ${cls||''}">${v}</div></div>`; }
 
+// indices of driving steps that are a day start, the finish, or a ≥thr km/h change from the last marked step
+function speedChangePoints(T,thr){
+  const idx=[]; let lastSpd=null,lastDay=null;
+  const drvIdx=[]; for(let i=0;i<T.time.length;i++) if(T.driving[i]) drvIdx.push(i);
+  const lastDrv=drvIdx[drvIdx.length-1];
+  for(let i=0;i<T.time.length;i++){
+    if(!T.driving[i]) continue;
+    const first=T.day[i]!==lastDay, last=i===lastDrv, big=lastSpd==null||Math.abs(T.speed[i]-lastSpd)>=thr;
+    if(first||last||big){ idx.push(i); lastSpd=T.speed[i]; }
+    lastDay=T.day[i];
+  }
+  return idx;
+}
+
+// per-day battery SoC (start of driving → end of day after charging), distance and average speed
+function renderDayTable(T){
+  const byDay=new Map();
+  for(let i=0;i<T.time.length;i++){ const d=T.day[i];
+    if(!byDay.has(d)) byDay.set(d,{firstDrv:null,lastDrv:null,lastRec:i,drv:0});
+    const o=byDay.get(d); o.lastRec=i;
+    if(T.driving[i]){ if(o.firstDrv==null) o.firstDrv=i; o.lastDrv=i; o.drv++; } }
+  const days=[...byDay.keys()].sort((a,b)=>a-b), dtH=PARAMS.dt/60;
+  const cols=['Day','SoC start, %','SoC end, %','Dist covered, km','Avg speed, km/h'];
+  let html='<table><thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>', prevEnd=0;
+  for(const d of days){ const o=byDay.get(d); if(o.firstDrv==null) continue;
+    const socStart=T.soc[o.firstDrv]*100, socEnd=T.soc[o.lastRec]*100;
+    const endDist=T.dist[o.lastDrv], covered=endDist-prevEnd; prevEnd=endDist;
+    const hrs=o.drv*dtH, avg=hrs>0?covered/hrs:0;
+    html+=`<tr><td>${d}</td><td>${socStart.toFixed(1)}</td><td>${socEnd.toFixed(1)}</td><td>${covered.toFixed(0)}</td><td>${avg.toFixed(1)}</td></tr>`; }
+  document.getElementById('dayTable').innerHTML=html+'</tbody></table>';
+}
+function stopName(d){ for(let j=0;j<CONTROL_STOPS_KM.length;j++) if(Math.abs(d-CONTROL_STOPS_KM[j])<2) return CONTROL_STOP_NAMES[j]; return ''; }
+
 function renderTable(T){
-  const thr=8, rows=[]; let lastSpd=null,lastDay=null;
+  const thr=PARAMS.tableThr, rows=[]; let lastSpd=null,lastDay=null;
   const drvIdx=[]; for(let i=0;i<T.time.length;i++) if(T.driving[i]) drvIdx.push(i);
   const lastDrv=drvIdx[drvIdx.length-1];
   for(let i=0;i<T.time.length;i++){
     if(T.stop[i]){ if(rows.length&&rows[rows.length-1]._stop&&Math.abs(rows[rows.length-1].d-T.dist[i])<0.5) continue;
-      rows.push(mkRow(T,i,0,'CONTROL STOP',true)); continue; }
+      const nm=stopName(T.dist[i]); rows.push(mkRow(T,i,nm?'CONTROL STOP — '+nm:'CONTROL STOP',true)); continue; }
     if(!T.driving[i]) continue;
     const first=T.day[i]!==lastDay, last=i===lastDrv, big=lastSpd==null||Math.abs(T.speed[i]-lastSpd)>=thr;
-    if(first||last||big){ rows.push(mkRow(T,i,lastSpd==null?0:T.speed[i]-lastSpd,first?'day start':(last?'finish':''),false)); lastSpd=T.speed[i]; }
+    if(first||last||big){ rows.push(mkRow(T,i,first?'day start':(last?'finish':''),false)); lastSpd=T.speed[i]; }
     lastDay=T.day[i];
   }
-  const cols=['Time','Dist','Speed','Δ','Irr','Grd%','Elev','Solar','Demand','SoC','Note'];
-  let html='<table><thead><tr>'+cols.map(c=>`<th class="${c==='Note'?'note':''}">${c}</th>`).join('')+'</tr></thead><tbody>';
+  const cols=['Time','Dist, km','Speed, km/h','Irr, W/m²','Solar-in, W','Solar-act, W','Grd, %','Elev, m','Demand, W','SoC, %','Event'];
+  let html='<table><thead><tr>'+cols.map(c=>`<th class="${c==='Event'?'note':''}">${c}</th>`).join('')+'</tr></thead><tbody>';
   for(const r of rows){ html+=`<tr class="${r._stop?'stop':''}">`+
-    `<td>${r.time}</td><td>${r.d.toFixed(0)}</td><td>${r.spd.toFixed(1)}</td><td>${r.dlt>0?'+':''}${r.dlt.toFixed(1)}</td>`+
-    `<td>${r.irr.toFixed(0)}</td><td>${r.gr.toFixed(2)}</td><td>${r.alt.toFixed(0)}</td><td>${r.solar.toFixed(0)}</td>`+
+    `<td>${r.time}</td><td>${r.d.toFixed(0)}</td><td>${r.spd.toFixed(1)}</td>`+
+    `<td>${r.irr.toFixed(0)}</td><td>${r.solarIn.toFixed(0)}</td><td>${r.solar.toFixed(0)}</td>`+
+    `<td>${r.gr.toFixed(2)}</td><td>${r.alt.toFixed(0)}</td>`+
     `<td>${r.dem.toFixed(0)}</td><td>${r.soc.toFixed(1)}</td><td class="note">${r.note}</td></tr>`; }
   document.getElementById('table').innerHTML=html+'</tbody></table>';
 }
-function mkRow(T,i,dlt,note,stop){ return {time:fmtTime(T.time[i]),d:T.dist[i],spd:T.speed[i],dlt,irr:T.irr[i],
-  gr:T.grade[i],alt:T.alt[i],solar:T.solar[i],dem:T.demand[i],soc:T.soc[i]*100,note,_stop:stop}; }
+// Solar-in = irradiance over the whole panel (irr × area); Solar-act = harvested after the efficiency selection (T.solar)
+function mkRow(T,i,note,stop){ return {time:fmtTime(T.time[i]),d:T.dist[i],spd:T.speed[i],irr:T.irr[i],
+  solarIn:T.irr[i]*CAR.panelArea,gr:T.grade[i],alt:T.alt[i],solar:T.solar[i],dem:T.demand[i],soc:T.soc[i]*100,note,_stop:stop}; }
 
 buildControls(); run();
 </script>
