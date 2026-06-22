@@ -19,7 +19,8 @@
 - Single self-contained file: inline CSS + JS, **Chart.js via CDN**. No build step.
 - It is a **faithful JS port of the Python model** — losses, solar/atmosphere, speed strategy (bisection), whole-race battery budget + client-side calibration, location-based control stops, per-territory speed limits, regen-to-battery, and the time-step loop.
 - **INVARIANT: the JS must stay in sync with the Python model.** Verified to match exactly: optimized legal 3022 km / 116.2 km/h / 100% SoC; legal target-20% floor 95.7%; `--v-max 150` target-20% → 20.2%; challenger 2931.7 / 93.1 / 16.4%.
-- Controls: preset (Challenger/Optimized) + sliders for all car/race params, plus target-SoC and v-max-override toggles. Outputs: summary cards, 5 charts (speed, SoC, power-stack, elevation, irradiance), and a speed-profile table.
+- Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns; control-stop rows named from `data/route.csv`).
+- **Sidebar and main panel scroll independently** (Preset & strategy / Goal-Seek stay visible while the main panel scrolls).
 
 **Model facts (BWSC 2027, simulator)**
 - 4-day race, Darwin→Adelaide 3022 km; regulation window 08:00–17:00; **9 location-based control stops** (30 min each, charge from solar during halt).
@@ -35,11 +36,37 @@
 - `main.py` (CLI) · `models/` (car, race) · `losses/` (10 loss models, incl. `gradient.py` `gravity_power`) · `environment/` (solar_model, atmosphere, route + `load_control_stops_km`/`load_speed_limits_km`) · `simulation/` (simulator, speed_strategy, energy_budget, plots, tables) · `index.html` (dashboard) · `data/` (route.csv, irradiance/, elevation/) · `regulations/` · `CLAUDE.md` (project instructions) · `docs/session-memory.md` (archive).
 - Run examples: `python main.py --preset optimized_regulation --route wsc [--plot --table --csv] [--target-soc 0.20] [--v-max 150]`.
 
-**Suggested next work** (from CLAUDE.md "What to Build Next"): refine the dashboard (current intent); then location-based irradiance (wire `data/irradiance/`), sensitivity analysis, wind model, cloud/weather model, race strategy optimizer.
+**Suggested next work** (from CLAUDE.md "What to Build Next"): location-based irradiance (wire `data/irradiance/`), sensitivity analysis, wind model, cloud/weather model, race strategy optimizer. (Dashboard refinement round — Goal-Seek, table/solar columns, per-day SoC, scroll & preset fixes — is **done**, merged to `main`.)
 
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-22 — Dashboard refinements: Goal-Seek, table/solar columns, per-day SoC, scroll & preset fixes
+#### Accomplished (all in `index.html`; merged to `main` via PR #4)
+1. **Goal-Seek** (new) — pick a target finish day+time and tick which non-regulation params it may
+   tune; it bisects an improvement factor (lerp current→best slider bound), snaps to slider steps,
+   and applies the found spec to the sliders. **Solar area (6 m²) and battery (3.056 kWh) are
+   hard-excluded.** Branches: "already met", "infeasible — earliest is …", and success (lists each
+   before→after change). Added `finishT` to the JS `simulate()` return to measure finish clock time.
+2. **Speed-profile table** — units in headers (`Dist, km`, `Speed, km/h`, …); dropped the Δ column;
+   added **Solar-in** (irr × panel area) and **Solar-act** (harvested after the efficiency selection).
+3. **Control-stop rows named** from `data/route.csv` (`CONTROL STOP — Alice Springs`, …).
+4. **Per-day summary table** — SoC start/end, distance covered, avg speed per day.
+5. **Granularity** — speed-table change threshold is now an adjustable slider (Display group); the
+   speed chart marks the substantial-change points.
+6. **Independent scroll** for sidebar vs main; **preset dropdown fixed** (persists selection + Custom
+   state on hand-tuning, so Challenger ⇄ Optimized works).
+
+#### Key Decisions / Findings
+- Goal-Seek param choice = **user picks** (checklist), not a fixed dial.
+- Verified (node, DOM-stubbed) that core physics is unchanged: optimized 3022/116.2/100%, challenger
+  2931.7/93.1/16.4%, target-20% floor 95.7%. Optimized car naturally finishes **~Day 4 11:30**; even
+  maxing every loss param it can't finish before **~Day 4 11:00** — it is speed-limited (NT 130/SA 110),
+  consistent with the solar-saturation finding. Goal-Seek's useful range is widest from the Challenger spec.
+
+#### Next steps
+- Location-based irradiance (wire `data/irradiance/`), then sensitivity analysis / wind / cloud / optimizer.
 
 ### 2026-06-22 — Visualization, whole-race strategy, regen, live dashboard
 **Accomplished (three work bodies, all merged to `main` and pushed):**
