@@ -13,7 +13,7 @@
 - Repo `ungkumuhammad/solarcar` is **public**; **`main` contains everything** (all feature work merged).
 - Interactive dashboard is **LIVE**: **https://ungkumuhammad.github.io/solarcar/**
 - Auto-deploys via `.github/workflows/pages.yml` on any push that touches `index.html` (or the workflow). Pages source = GitHub Actions (already enabled).
-- Housekeeping: 3 old merged branches still exist on the remote (`claude/solar-car-losses-tivgr7`, `claude/solar-challenge-2027-plan-nsj4yl`, `claude/dynamic-speed-profile-viz-27tnlj`). The managed git proxy here **cannot delete remote branches**; remove them from the GitHub Branches UI if desired (purely cosmetic — all fully merged).
+- Housekeeping: old merged branches still exist on the remote (`claude/solar-car-losses-tivgr7`, `claude/solar-challenge-2027-plan-nsj4yl`, `claude/dynamic-speed-profile-viz-27tnlj`, `claude/goal-speed-limit-filter-n3pfiz`). The managed git proxy here **cannot delete remote branches**; remove them from the GitHub Branches UI if desired (purely cosmetic — all fully merged).
 
 **The dashboard (`index.html`) — current focus for refinement**
 - Single self-contained file: inline CSS + JS, **Chart.js via CDN**. No build step.
@@ -43,8 +43,8 @@
 
 ## Session Log (newest first)
 
-### 2026-06-22 — Goal-seek leaves speed limit open + remarks on exceedance
-#### Accomplished (branch `claude/goal-speed-limit-filter-n3pfiz`; pushed, not yet merged)
+### 2026-06-22 — Goal-seek leaves speed limit open + remarks on exceedance  ✅ MERGED TO MAIN + LIVE
+#### Accomplished (branch `claude/goal-speed-limit-filter-n3pfiz` → **merged to `main`** via `--no-ff`; Pages redeployed, change is **live** at the dashboard URL)
 - Goal-seek was returning **no usable result**: the posted caps (NT 130 / SA 110, §3.31.6) leave
   the optimized car solar-saturated, so target-SoC floored at ~95.7% and the finish-time Goal-Seek
   reported "not reachable". Fixed by **leaving the limit open during a goal-seek** (replaced by a
@@ -67,7 +67,25 @@
   NT→SA border at 130; using the **start** position removed the false positive.
 
 #### Next steps
-- Optional: merge the branch to `main` (will redeploy the dashboard). Then location-based irradiance, etc.
+- Done: merged to `main`, dashboard redeployed (Pages run #7). Branch left on remote (cosmetic).
+
+---
+
+## ► NEXT SESSION — START HERE (task queued 2026-06-22)
+**Research: historical BWSC finish times — top 3 placings, last 3 events.**
+- Goal: find how fast the **1st, 2nd, and 3rd place** Challenger-class cars finished
+  (Darwin→Adelaide) in terms of **elapsed/finish time** for the **previous 3 World Solar
+  Challenge events** (2023, 2019, 2017 — note 2021 was cancelled for COVID).
+- Capture per event/placing: team & car, total finish time (and/or arrival timestamp),
+  any official avg speed, and the source/citation. Watch the Cruiser/Challenger class split.
+- Purpose: anchor our simulator's "4-day / ~116 km/h" target against real winning times —
+  sanity-check feasibility and set a competitive time goal.
+- **Reminder (CLAUDE.md rule #2): never fabricate numbers — cite each figure or mark
+  `[SOURCE NEEDED]`.** Likely needs WebSearch/WebFetch (official BWSC results pages,
+  Wikipedia event pages, team reports). Suggested home for findings: a new
+  `data/history/` or `docs/past-results.md`.
+
+---
 
 ### 2026-06-22 — Dashboard refinements: Goal-Seek, table/solar columns, per-day SoC, scroll & preset fixes
 #### Accomplished (all in `index.html`; merged to `main` via PR #4)
