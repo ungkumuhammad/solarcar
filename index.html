@@ -106,6 +106,27 @@ const CONTROL_STOP_NAMES = ['Katherine','Daly Waters','Tennant Creek','Barrow Cr
 const SPEED_LIMITS = [[0,130],[1690,110]]; // [from_km, limit] — NT 130 / SA 110 (§3.31.6)
 const OPEN_CEILING = 200; // analysis ceiling when a goal-seek leaves the limit open (mirror route.py)
 
+// Historical Challenger-class podium — last 3 BWSC events (see docs/past-results.md for citations).
+// h = official race time (hours); avg = km/h. Confirmed figures kept as reported; where only the
+// time was published, avg is derived as 3022/h and flagged with '~' in the label. Used purely as a
+// reference overlay (a dashed line on the speed chart + two cards) — it does NOT affect the model.
+const REF_TEAMS = [
+  {ev:'2025',pos:1,team:'Brunel',  car:'Nuna 13', h:34.906,avg:86.6, approx:false},
+  {ev:'2025',pos:2,team:'Twente',  car:'',        h:35.15, avg:86.0, approx:true},
+  {ev:'2025',pos:3,team:'Innoptus',car:'',        h:35.41, avg:85.3, approx:true},
+  {ev:'2023',pos:1,team:'Innoptus',car:'Infinite',h:34.08, avg:88.7, approx:true},
+  {ev:'2023',pos:2,team:'Twente',  car:'RED X',   h:34.42, avg:87.8, approx:true},
+  {ev:'2023',pos:3,team:'Brunel',  car:'Nuna 12', h:36.00, avg:84.0, approx:true},
+  {ev:'2019',pos:1,team:'Agoria',  car:'BluePoint',h:34.87, avg:86.6, approx:false},
+  {ev:'2019',pos:2,team:'Tokai',   car:'Challenger',h:35.07,avg:86.1, approx:false},
+  {ev:'2019',pos:3,team:'Michigan',car:'Electrum',h:37.93, avg:79.6, approx:false},
+];
+const POS_GLYPH={1:'①',2:'②',3:'③'};
+function refTime(h){ const hh=Math.floor(h), mm=Math.round((h-hh)*60); return hh+'h'+String(mm).padStart(2,'0')+'m'; }
+function refLabel(r){ return `${r.ev} ${POS_GLYPH[r.pos]} ${r.team}${r.car?' ('+r.car+')':''} — ${r.approx?'~':''}${r.avg} km/h, ${refTime(r.h)}`; }
+function refOptions(){ return REF_TEAMS.map((r,i)=>`<option value="${i}">${refLabel(r)}</option>`).join(''); }
+let REF_SEL = null; // index into REF_TEAMS, or null
+
 const PRESETS = {
   challenger: { Cd:0.09, A:0.96, mass:180, Crr:0.0015, motorEff:0.96, gearEff:0.99, regenEff:0.72,
     busV:150, wireR:0.04, battR:0.08, battKwh:3.056, initSoc:0.80, panelArea:6.0, panelEff:0.245,
@@ -312,7 +333,9 @@ function buildControls(){
       <label><span>target final SoC</span><span class="val" id="targetSocV">20%</span></label></div>
     <div class="ctl"><label class="toggle"><input type="checkbox" id="useVmax"> Override speed cap (not race-legal)</label>
       <input type="range" id="vmaxOv" min="110" max="180" step="5" value="150" disabled>
-      <label><span>v-max override</span><span class="val" id="vmaxOvV">150</span></label></div>`;
+      <label><span>v-max override</span><span class="val" id="vmaxOvV">150</span></label></div>
+    <div class="ctl"><label><span>Winning-team reference</span></label>
+      <select id="refTeam"><option value="">— none —</option>${refOptions()}</select></div>`;
   root.appendChild(g0);
   buildGoalSeek(root);
   for(const [title,items] of PARAM_SCHEMA){
@@ -335,6 +358,9 @@ function buildControls(){
     if(e.target.value==='custom'){ PRESET_NAME='custom'; return; } // 'custom' is a state, not a preset
     PRESET_NAME=e.target.value; CAR={...PRESETS[PRESET_NAME]}; buildControls(); run();
   });
+  const refSel=document.getElementById('refTeam');
+  refSel.value = REF_SEL==null ? '' : String(REF_SEL);   // restore selection after rebuild
+  refSel.addEventListener('change',e=>{ REF_SEL = e.target.value===''?null:parseInt(e.target.value); run(); });
   for(const [,items] of PARAM_SCHEMA) for(const [key] of items){
     document.getElementById('r_'+key).addEventListener('input',e=>{
       const v=parseFloat(e.target.value);
@@ -469,6 +495,15 @@ function run(){
     ${card('Energy in', (r.energyIn/1000).toFixed(1)+' kWh')}
     ${card('Drag share', loss(r.totals.drag))}
     ${card('Regen recovered', (r.totals.regen).toFixed(0)+' Wh')}`;
+  if(REF_SEL!=null){
+    const ref=REF_TEAMS[REF_SEL];
+    const dSpd=r.avgSpeed-ref.avg, dTime=r.driveH-ref.h;        // sim minus reference
+    document.getElementById('cards').innerHTML += `
+      ${card(`Ref: ${ref.ev} ${ref.team}`, (ref.approx?'~':'')+ref.avg+' km/h', dSpd>=0?'good':'bad')}
+      ${card('Ref race time', refTime(ref.h))}
+      ${card('Sim vs ref speed', (dSpd>=0?'+':'')+dSpd.toFixed(1)+' km/h', dSpd>=0?'good':'bad')}
+      ${card('Sim vs ref time', (dTime>=0?'+':'')+dTime.toFixed(1)+' h', dTime<=0?'good':'bad')}`;
+  }
 
   const baseX={ type:'linear', ticks:{ color:'#8b98a5', callback:v=>'D'+(Math.floor(v)+1), maxTicksLimit:8 }, grid:{color:'#222b34'} };
   const yAx=t=>({ ticks:{color:'#8b98a5'}, grid:{color:'#222b34'}, title:{display:!!t,text:t,color:'#8b98a5'} });
@@ -479,8 +514,12 @@ function run(){
   // markers on the speed line exactly where speed changes substantially (same points as the table)
   const cpSet=new Set(speedChangePoints(T,PARAMS.tableThr));
   const spdRadii=x.map((t,i)=>cpSet.has(i)?3.5:0);
-  mkChart('cSpeed',{type:'line',data:{datasets:[{data:pts(T.speed),borderColor:'#4aa8ff',borderWidth:1.3,fill:true,backgroundColor:'rgba(74,168,255,.12)',
-    pointRadius:spdRadii,pointHoverRadius:spdRadii.map(r=>r?5:0),pointBackgroundColor:'#ffd166',pointBorderColor:'#ffd166'}]},options:baseOpts()});
+  const spdDatasets=[{data:pts(T.speed),borderColor:'#4aa8ff',borderWidth:1.3,fill:true,backgroundColor:'rgba(74,168,255,.12)',
+    pointRadius:spdRadii,pointHoverRadius:spdRadii.map(r=>r?5:0),pointBackgroundColor:'#ffd166',pointBorderColor:'#ffd166'}];
+  if(REF_SEL!=null && x.length){ const ref=REF_TEAMS[REF_SEL];   // winner's overall avg pace as a reference line
+    spdDatasets.push({label:'ref avg',data:[{x:x[0],y:ref.avg},{x:x[x.length-1],y:ref.avg}],
+      borderColor:'#ffd166',borderWidth:1.3,borderDash:[6,4],fill:false,pointRadius:0}); }
+  mkChart('cSpeed',{type:'line',data:{datasets:spdDatasets},options:baseOpts()});
   mkChart('cSoc',{type:'line',data:{datasets:[{data:pts(T.soc.map(s=>s*100)),borderColor:'#3fb950',borderWidth:1.5,fill:true,backgroundColor:'rgba(63,185,80,.12)'}]},options:baseOpts({scales:{x:baseX,y:{...yAx('%'),min:0,max:100}}})});
   mkChart('cIrr',{type:'line',data:{datasets:[{data:pts(T.irr),borderColor:'#ff7f0e',borderWidth:1.2,fill:true,backgroundColor:'rgba(255,127,14,.12)'}]},options:baseOpts()});
   mkChart('cElev',{type:'line',data:{datasets:[{data:pts(T.alt),borderColor:'#8c564b',borderWidth:1.3,fill:true,backgroundColor:'rgba(140,86,75,.18)'}]},options:baseOpts()});

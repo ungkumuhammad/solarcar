@@ -37,7 +37,9 @@
 - `main.py` (CLI) · `models/` (car, race) · `losses/` (10 loss models, incl. `gradient.py` `gravity_power`) · `environment/` (solar_model, atmosphere, route + `load_control_stops_km`/`load_speed_limits_km`) · `simulation/` (simulator, speed_strategy, energy_budget, plots, tables) · `index.html` (dashboard) · `data/` (route.csv, irradiance/, elevation/) · `regulations/` · `CLAUDE.md` (project instructions) · `docs/session-memory.md` (archive).
 - Run examples: `python main.py --preset optimized_regulation --route wsc [--plot --table --csv] [--target-soc 0.20] [--v-max 150]`.
 
-**Suggested next work** (from CLAUDE.md "What to Build Next"): location-based irradiance (wire `data/irradiance/`), sensitivity analysis, wind model, cloud/weather model, race strategy optimizer. (Dashboard refinement round — Goal-Seek, table/solar columns, per-day SoC, scroll & preset fixes — is **done**, merged to `main`.)
+**Historical benchmark** — `docs/past-results.md` records the Challenger-class podium for the last 3 events (2025/2023/2019): winners finish in **~34–35 h at ~86–88 km/h**. Surfaced in the dashboard via the **"Winning-team reference"** dropdown (avg-pace line + sim-vs-ref cards). Use these as the yardstick for future model refinements.
+
+**Suggested next work** (from CLAUDE.md "What to Build Next"): location-based irradiance (wire `data/irradiance/`), sensitivity analysis, wind model, cloud/weather model, race strategy optimizer. (Dashboard refinement round — Goal-Seek, table/solar columns, per-day SoC, scroll & preset fixes, **Winning-team reference** — is **done**.)
 
 ---
 
@@ -71,19 +73,28 @@
 
 ---
 
-## ► NEXT SESSION — START HERE (task queued 2026-06-22)
-**Research: historical BWSC finish times — top 3 placings, last 3 events.**
-- Goal: find how fast the **1st, 2nd, and 3rd place** Challenger-class cars finished
-  (Darwin→Adelaide) in terms of **elapsed/finish time** for the **previous 3 World Solar
-  Challenge events** (2023, 2019, 2017 — note 2021 was cancelled for COVID).
-- Capture per event/placing: team & car, total finish time (and/or arrival timestamp),
-  any official avg speed, and the source/citation. Watch the Cruiser/Challenger class split.
-- Purpose: anchor our simulator's "4-day / ~116 km/h" target against real winning times —
-  sanity-check feasibility and set a competitive time goal.
-- **Reminder (CLAUDE.md rule #2): never fabricate numbers — cite each figure or mark
-  `[SOURCE NEEDED]`.** Likely needs WebSearch/WebFetch (official BWSC results pages,
-  Wikipedia event pages, team reports). Suggested home for findings: a new
-  `data/history/` or `docs/past-results.md`.
+### 2026-06-22 — Historical BWSC finish times + dashboard "Winning-team reference"  ✅ (branch `claude/continuation-wcnnku`)
+#### Accomplished
+- **`docs/past-results.md`** — Challenger-class podium (1st/2nd/3rd) for the **last 3 events: 2025,
+  2023, 2019**, with team/car/country, official race time, avg speed, and citations. Winners finish
+  in **~34–35 h at ~86–88 km/h** (3rd places ~36–38 h / ~80–84 km/h).
+- **Discrepancy flagged & resolved (rule #3):** the queued task said "2023/2019/2017", but a **2025
+  BWSC happened** (most recent) — user chose the genuinely-last-3 (2025/2023/2019). 2021 = COVID.
+- **Dashboard (`index.html`):** new **"Winning-team reference"** dropdown (9 historical podium
+  entries) — selecting one adds a dashed **avg-pace line** on the speed chart + 4 cards (ref avg
+  speed, ref race time, sim-vs-ref speed Δ, sim-vs-ref time Δ). Purely a reference overlay; **does
+  not touch the model.** Verified additive (node DOM-stub: optimized 3022/116.2/100%, challenger
+  2931.7/93.1/16.4%, target-20 → 20.2% all unchanged).
+#### Key Decisions / Findings
+- **4-day finish is realistic** (every event's top-3 finished inside ~4 days). Our sim's like-for-like
+  pace (96 km/h, dist÷effective-drive) is ~10% **faster than the fastest-ever winners (~86–88)** —
+  consistent with the solar-saturation finding, but flags the model as **optimistic** (omits
+  weather/wind/cloud/traffic). Competitive race-time goal ≈ **34 h**.
+- **Env note:** WebFetch is blocked here (HTTP 403 on all domains); only WebSearch works — citations
+  are to search-surfaced pages.
+#### Next steps
+- Location-based irradiance (wire `data/irradiance/`), then wind / cloud / sensitivity / optimizer —
+  test each refinement against the historical times in `docs/past-results.md`.
 
 ---
 
