@@ -1,11 +1,12 @@
 name: Deploy dashboard to GitHub Pages
 
 # Publishes index.html (the interactive simulator dashboard) to GitHub Pages.
-# One-time setup: repo Settings → Pages → Build and deployment → Source = "GitHub Actions".
+# The configure-pages step uses enablement:true so the workflow turns Pages on
+# itself (build_type=workflow) on the first run — no manual Settings step needed.
 
 on:
   push:
-    branches: ["main", "claude/dynamic-speed-profile-viz-27tnlj"]
+    branches: ["main"]
     paths: ["index.html", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
@@ -27,6 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
