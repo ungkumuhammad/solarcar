@@ -320,9 +320,11 @@ solarcar/
 │   ├── energy_budget.py         ← EnergyBudget (aggregation + per-timestep traces)
 │   ├── plots.py                 ← generate_plots() dashboard + per-day power (matplotlib)
 │   └── tables.py                ← speed-profile table + CSV exporters
+├── MEMORY.md                    ← Canonical session memory (READ AT SESSION START)
+├── index.html                   ← Interactive dashboard (JS port; deployed to GitHub Pages)
 ├── docs/
 │   ├── race-plan.md             ← High-level 3-day race plan and speed analysis
-│   └── session-memory.md        ← Persistent session memory log (read at session start)
+│   └── session-memory.md        ← Archived session log (superseded by /MEMORY.md)
 ├── regulations/
 │   ├── bwsc-2027-regulations.md ← Full official BWSC 2027 regulations (PDF→Markdown)
 │   ├── key-rules-summary.md     ← Quick-reference table of race-critical rules
@@ -458,25 +460,24 @@ All design and strategy decisions must be checked against the BWSC 2027 Event Re
 
 ## Session Memory
 
-Memory file: `docs/session-memory.md`
+Canonical memory file: **`MEMORY.md`** (repo root). `docs/session-memory.md` is an archive of older entries.
 
-**Read `docs/session-memory.md` at the start of every session before doing any work.**
+**Read `MEMORY.md` at the start of every session before doing any work.**
 
-### compress command
+### update memory command
 
-When the user says "compress" (or "compress this session"):
+When the user says "update memory" (or "compress" / "compress this session"):
 
 1. Summarise the current session into a new dated entry:
    ```
-   ## YYYY-MM-DD — <one-line headline>
-   ### Accomplished
-   ### Key Decisions / Findings
-   ### Files Created / Modified
-   ### Project Status
-   ### Next Steps (waiting for instruction)
+   ### YYYY-MM-DD — <one-line headline>
+   #### Accomplished
+   #### Key Decisions / Findings
+   #### Next steps
    ```
-2. Prepend the new entry at the top of `docs/session-memory.md`, immediately below the file header.
-3. Commit: `chore: compress session YYYY-MM-DD`
+2. Prepend the new entry under the "Session Log" header in `MEMORY.md` (newest first), and
+   refresh the "Current Project State" section so it stays accurate.
+3. Commit: `chore: update memory YYYY-MM-DD`
 4. Push to the current branch.
 5. Confirm to the user that memory has been saved.
 

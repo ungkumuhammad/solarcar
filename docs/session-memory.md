@@ -1,7 +1,8 @@
 # Session Memory — Solar Car BWSC 2027
 
-> Read this file at the start of every session to restore project context.
-> Most recent session at top. When the user says "compress", prepend a new entry.
+> ⚠️ **ARCHIVE — superseded by `/MEMORY.md` (repo root), which is now the canonical memory.**
+> Read `MEMORY.md` at session start and update it on instruction. This file is kept for the
+> older detailed history below.
 
 ---
 
