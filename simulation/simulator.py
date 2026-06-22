@@ -47,6 +47,7 @@ class RaceSimulator:
         target_final_soc: Optional[float] = None,
         v_max_override_kmh: Optional[float] = None,
         max_regen_power_w: float = 3000.0,
+        open_limits: bool = False,
     ):
         self.car = car
         self.race = race
@@ -55,8 +56,13 @@ class RaceSimulator:
         self.target_final_soc = target_final_soc
         self.v_max_override = v_max_override_kmh
         self.max_regen_w = max_regen_power_w
+        # Goal-seek "leave the limit open" mode: the per-step posted cap is replaced by a
+        # high analysis ceiling so the solver can find a result; any exceedance is remarked.
+        self.open_limits = open_limits
         # Control-stop checkpoint positions (cumulative km), sorted ascending.
-        from environment.route import OFFICIAL_CONTROL_STOPS_KM, OFFICIAL_SPEED_LIMITS_KM
+        from environment.route import (
+            OFFICIAL_CONTROL_STOPS_KM, OFFICIAL_SPEED_LIMITS_KM, OPEN_LIMIT_CEILING_KMH,
+        )
         stops = control_stops_km if control_stops_km is not None else list(OFFICIAL_CONTROL_STOPS_KM)
         self.control_stops_km = sorted(s for s in stops if s < race.distance_km)
         # Posted speed limits as (km_from, limit) steps.
@@ -72,6 +78,8 @@ class RaceSimulator:
         strategy_vmax = race.speed_max_kmh
         if v_max_override_kmh is not None and v_max_override_kmh > strategy_vmax:
             strategy_vmax = v_max_override_kmh
+        if self.open_limits:
+            strategy_vmax = max(strategy_vmax, OPEN_LIMIT_CEILING_KMH)
         self.strategy = SpeedStrategy(
             car=car,
             v_min_kmh=race.speed_min_kmh,
@@ -81,10 +89,17 @@ class RaceSimulator:
         self.dt_h = race.time_step_min / 60.0   # timestep in hours
 
     def _v_max_at(self, distance_km: float) -> float:
-        """Speed cap (km/h) at a position: posted limit, or the analysis override."""
-        from environment.route import speed_limit_at_distance
+        """Speed cap (km/h) at a position: posted limit, or the analysis override.
+
+        When ``open_limits`` is set (a goal-seek that left the limit open) the posted cap is
+        replaced by a high analysis ceiling so the solver isn't blocked; exceedances are
+        remarked afterwards rather than preventing a result.
+        """
+        from environment.route import speed_limit_at_distance, OPEN_LIMIT_CEILING_KMH
         if self.v_max_override is not None:
             return self.v_max_override
+        if self.open_limits:
+            return OPEN_LIMIT_CEILING_KMH
         return speed_limit_at_distance(self.speed_limits_km, distance_km)
 
     def run(self, verbose: bool = False) -> EnergyBudget:
@@ -272,6 +287,16 @@ class RaceSimulator:
             distance_km / budget.total_driving_hours if budget.total_driving_hours > 0 else 0.0
         )
 
+        # Flag any driving above the posted limit (nonzero only when limits were left open).
+        from environment.route import speed_limit_exceedance
+        exc = speed_limit_exceedance(
+            budget.distance_trace, budget.speed_trace, budget.driving_trace, self.speed_limits_km
+        )
+        budget.over_limit_steps = exc["steps"]
+        budget.over_limit_distance_km = exc["distance_km"]
+        budget.over_limit_max_kmh = exc["max_speed_kmh"]
+        budget.over_limit_max_over_kmh = exc["max_over_kmh"]
+
         return budget
 
     def run_to_target_soc(self, target_soc: float, tol: float = 0.01,
@@ -282,9 +307,18 @@ class RaceSimulator:
         function of discharge_scale, so we bisect on the scale. Returns
         (budget, scale, cap_limited): cap_limited is True if even max_scale can't
         drain the battery to the target (the achievable floor is returned).
+
+        The goal-seek leaves the posted speed limit open so a target is actually
+        reachable (the optimized car is solar-saturated at NT130/SA110 and otherwise
+        floors at ~95.7%). Any driving above the posted limit is remarked on the
+        returned budget — analysis only, not race-legal (§3.31.6).
         """
+        from environment.route import OPEN_LIMIT_CEILING_KMH
         self.target_final_soc = target_soc
         self.strategy.target_final_soc = target_soc
+        # Leave the limit open for the calibration (and the final returned run).
+        self.open_limits = True
+        self.strategy.v_max = max(self.strategy.v_max, OPEN_LIMIT_CEILING_KMH / 3.6)
 
         def run_with(scale):
             self.strategy.discharge_scale = scale

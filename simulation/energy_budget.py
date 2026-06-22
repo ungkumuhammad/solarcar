@@ -12,6 +12,13 @@ class EnergyBudget:
     final_soc: float = 0.0
     avg_speed_kmh: float = 0.0
 
+    # Posted-speed-limit exceedance (nonzero only when a goal-seek left the cap open;
+    # legal runs report all zeros). Flags an analysis-only plan that is not race-legal.
+    over_limit_steps: int = 0
+    over_limit_distance_km: float = 0.0
+    over_limit_max_kmh: float = 0.0
+    over_limit_max_over_kmh: float = 0.0
+
     # Energy sources (Wh, positive = energy put into system)
     solar_harvested_wh: float = 0.0
     regen_recovered_wh: float = 0.0    # captured within gradient_wh
@@ -114,6 +121,10 @@ class EnergyBudget:
         print(f"  Average speed:      {self.avg_speed_kmh:>8.1f} km/h")
         print(f"  Race completed:     {'YES' if self.race_completed else 'NO':>8s}")
         print(f"  Final battery SoC:  {self.final_soc * 100:>7.1f}%")
+        if self.over_limit_distance_km > 0:
+            print(f"  ⚠ Exceeds posted limit: drives above NT130/SA110 for "
+                  f"{self.over_limit_distance_km:.1f} km, peak {self.over_limit_max_kmh:.1f} km/h "
+                  f"(+{self.over_limit_max_over_kmh:.1f} over) — analysis only, not race-legal (§3.31.6).")
         print()
         print("  ENERGY SOURCES (Wh)")
         print(f"    Solar harvested:  {self.solar_harvested_wh:>8.1f}")
