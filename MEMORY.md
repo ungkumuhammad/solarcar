@@ -24,10 +24,10 @@
 - **Goal-seek now leaves the posted speed limit open** (200 km/h analysis ceiling) so it always returns a result; any driving above NT130/SA110 is **remarked** (distance over, peak, amount over) and flagged analysis-only (§3.31.6). Applies to both the target-SoC plan and the finish-time Goal-Seek, in CLI + dashboard. **Non-goal-seek runs are unchanged and stay race-legal** (report zero exceedance).
 - **Goal-Seek has TWO modes (dashboard, `gsMode` selector):**
   - **Finish by day & time** — bidirectional: if the spec already finishes **at/before** the target → **PACE DOWN** to a single constant cruise (slowest legal speed still meeting the target, `ceil` to 0.1 km/h) → lower avg speed + energy surplus; if it finishes **after** → existing param speed-up (open-limit + exceedance remark). **Day 5 selectable** (`GS_DAY_MAX=5`); picking a day > `PARAMS.days` bumps `PARAMS.days` so it runs as a longer race. Cruise lock clears on preset/slider/ref-team change.
-  - **Average speed** (`goalSeekAvg()`, 2026-06-24) — drives a constant `fixedSpeed=targetAvg` (auto-extending days), reports the **energy demand** (avg/peak W while driving, kWh harvested) + finish + SoC; if unsustainable it bisection-**advises the car-parameter changes** (checked params) needed to hold that pace. Notes when posted caps hold the actual avg below the requested one.
-  - Both reuse the `p.fixedSpeed` lever in `simulate()` (mirrors Python `--speed`); physics untouched.
+  - **Average speed** (`goalSeekAvg()`, dynamic since 2026-06-24) — keeps the **DYNAMIC** speed strategy (speed varies with solar, SoC, grade, air density) and bisection-calibrates a new **`speedScale`** lever in `simulate()` (multiplies the dynamic speed, re-clipped to `[vmin, posted cap]`) so the resulting race **average equals the requested value**. Runs a 7-day calibration then trims `PARAMS.days` to the actual finish day. Reports energy demand (avg/peak W, kWh harvested), finish, SoC. Flags the **posted-cap ceiling** if the target avg is unreachable legally (e.g. optimized max ≈ 120 km/h); if the battery can't carry the route at that pace it **advises checked-param changes**. Verified: target 100 → speed 85.2–110.5 averaging 100.2; 86.6 → 68.5–96.4 averaging 86.8; 140 rejected (cap-bound). **NOT a flat line.**
+  - The day+time mode reuses `p.fixedSpeed` (constant cruise, mirrors Python `--speed`); avg mode uses `p.speedScale` (dynamic). Both clear on preset/slider/ref/target change; physics in `simulate()` untouched.
 - **Winning-team dropdown now DRIVES the sim (dashboard, 2026-06-23):** selecting a team runs OUR configured car at that team's avg pace (`fixedSpeed=ref.avg`), auto-extending race days via `daysToFinishAtFixed()` (cap 7; ~80–88 km/h → 5 days) so it finishes. Speed/SoC/solar/elevation/power/finish all reflect it; cards show team pace, ref race time, our finish, SoC at finish; `#note` shows the scenario + day auto-extend. Deselect → reverts to dynamic. (Replaces the old overlay-only behavior.)
-- Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns). **Speed-profile table (2026-06-24): runs on the 10-min basis, labels every control stop by location (Katherine, Daly Waters, … Port Augusta — name recorded in the JS trace `T.stopName`; Python via `control_stop_name_at()` in `environment/route.py`), and includes parked-but-charging rows (speed 0, irradiance > 0 at dawn 6:30–8:00 / dusk 17:00–18:30).**
+- Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns). **Speed-profile table (2026-06-24): shows EVERY 10-min step by default (toggle `tableEvery` / "Speed table: every 10-min step" in Preset & strategy; off → substantial-change filter via `tableThr`), labels every control stop by location (Katherine, Daly Waters, … Port Augusta — name recorded in the JS trace `T.stopName`; Python via `control_stop_name_at()` in `environment/route.py`), and includes parked-but-charging rows (speed 0, irradiance > 0 at dawn 6:30–8:00 / dusk 17:00–18:30).**
 - **Sidebar and main panel scroll independently** (Preset & strategy / Goal-Seek stay visible while the main panel scrolls).
 
 **Model facts (BWSC 2027, simulator)**
@@ -51,6 +51,25 @@
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-24 — Dynamic average-speed Goal-Seek + every-10-min speed table  ✅ MERGED TO MAIN (PR #10, 3cc5db0)
+#### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**)
+- **Average-speed Goal-Seek made DYNAMIC** (was a flat constant line). New **`speedScale`** lever in
+  `simulate()` scales the dynamic-strategy speed (still shaped by solar/SoC/grade/air-density),
+  bisection-calibrated so the race **average = the requested value**. 7-day calibration, then trims
+  `PARAMS.days` to the finish day. Reports demand/finish/SoC; flags the posted-cap ceiling; advises
+  params if the battery can't carry the route. Verified: 100→85.2–110.5 avg 100.2; 86.6→68.5–96.4 avg
+  86.8; 140 rejected (max ≈120).
+- **Speed-profile table shows every 10-min step** by default (toggle `tableEvery`); stops named,
+  parked-charging rows shown. (User reported the table wasn't showing 10-min detail.)
+#### Key Decisions / Findings
+- `speedScale` and `fixedSpeed` are mutually exclusive levers (day+time pace-down = constant cruise;
+  avg mode = dynamic scale); both clear on preset/slider/ref/target change. `simulate()` physics
+  unchanged → JS↔Python parity holds (Python avg mode is the `--speed` constant, dashboard-only dynamic).
+#### Next steps
+- Location-based irradiance (wire `data/irradiance/`), then wind / cloud / sensitivity / optimizer.
+
+---
 
 ### 2026-06-24 — 10-min profile, avg-speed Goal-Seek, Day 5, control-stop names  ✅ MERGED TO MAIN (PR #9)
 #### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**, 044d44d)
