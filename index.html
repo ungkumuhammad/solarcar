@@ -13,6 +13,7 @@
   limits (NT 130 / SA 110, §3.31.6), and regen-to-battery.
 -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root { --bg:#0f1419; --panel:#1a2129; --ink:#e6edf3; --mut:#8b98a5; --acc:#4aa8ff; --line:#2a333d; }
   * { box-sizing: border-box; }
@@ -62,14 +63,46 @@
   .checklist label { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--ink); }
   .gs .result { font-size:12px; color:#cdd9e5; margin-top:8px; line-height:1.5; }
   .gs .result.ok { color:#3fb950; } .gs .result.bad { color:#f0b429; }
+  /* Login overlay */
+  #login { position:fixed; inset:0; z-index:1000; display:none; align-items:center; justify-content:center;
+           background:var(--bg); }
+  #login .loginCard { width:320px; max-width:90vw; background:var(--panel); border:1px solid var(--line);
+           border-radius:10px; padding:24px; box-shadow:0 8px 30px rgba(0,0,0,.4); }
+  #login h2 { margin:0 0 4px; font-size:18px; }
+  #login .sub { color:var(--mut); font-size:12px; margin-bottom:18px; }
+  #login label { display:block; font-size:12px; color:var(--mut); margin:0 0 4px; }
+  #login input { width:100%; padding:9px 10px; margin-bottom:12px; background:var(--bg); color:var(--ink);
+           border:1px solid var(--line); border-radius:6px; font:14px system-ui,sans-serif; }
+  #login input:focus { outline:none; border-color:var(--acc); }
+  #login button { width:100%; padding:10px; background:var(--acc); color:#06121f; border:none; border-radius:6px;
+           font-size:14px; font-weight:600; cursor:pointer; }
+  #login button:hover { filter:brightness(1.08); }
+  #login button:disabled { opacity:.6; cursor:default; }
+  #loginErr { color:#f85149; font-size:12px; min-height:16px; margin-top:10px; }
+  #signout { margin-left:auto; padding:5px 12px; background:transparent; color:var(--mut); border:1px solid var(--line);
+           border-radius:6px; font-size:12px; cursor:pointer; }
+  #signout:hover { color:var(--ink); border-color:var(--acc); }
 </style>
 </head>
 <body>
-<header>
+<div id="login">
+  <form class="loginCard" id="loginForm">
+    <h2>🏎️☀️ Solar Car Dashboard</h2>
+    <div class="sub">Team access only — please sign in.</div>
+    <label for="loginUser">Username</label>
+    <input id="loginUser" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="loginPass">Password</label>
+    <input id="loginPass" type="password" autocomplete="current-password" required>
+    <button id="loginBtn" type="submit">Sign in</button>
+    <div id="loginErr"></div>
+  </form>
+</div>
+<header id="app" style="display:none;width:100%">
   <h1>🏎️☀️ Solar Car Race Simulator</h1>
   <span class="sub">BWSC 2027 Challenger · Darwin→Adelaide 3022 km · in-browser model (mirrors the Python simulator)</span>
+  <button id="signout" style="display:none">Sign out</button>
 </header>
-<div class="wrap">
+<div class="wrap" id="appWrap" style="display:none">
   <aside class="controls" id="controls"></aside>
   <main class="main">
     <div id="note" class="note" style="display:none"></div>
@@ -93,6 +126,72 @@
 </div>
 <script>
 "use strict";
+// ───────────────────────── Authentication (Supabase Auth) ─────────────────────────
+// The dashboard is gated so only authorized team members can use it. The password is
+// verified by Supabase's servers — it is NOT stored in this page. Only the Project URL
+// and the anon public key live here, and both are safe to expose (access is enforced
+// server-side by Supabase Auth + Row Level Security).
+//
+// SETUP (one time):
+//   1. Create a free project at supabase.com → Settings → API → copy "Project URL"
+//      and the "anon public" key into the two constants below.
+//   2. Authentication → Users → Add user:
+//        Email:    ungkumzulhilmi@solarcar.local   Password: solarcar1993
+//        Enable "Auto Confirm User".
+//   3. (Optional) Authentication → Providers → Email: disable public sign-ups so only
+//      users you create can log in.
+// Users log in with their USERNAME; it is mapped to <username>@LOGIN_DOMAIN internally.
+const SUPABASE_URL = "PASTE_YOUR_PROJECT_URL";       // e.g. https://xxxxxxxx.supabase.co
+const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_KEY";
+const LOGIN_DOMAIN = "solarcar.local";               // username → email mapping
+
+const _authConfigured = !SUPABASE_URL.startsWith("PASTE_") && !SUPABASE_ANON_KEY.startsWith("PASTE_");
+const sb = _authConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+let appStarted = false;
+function startApp(){
+  if(appStarted) return; appStarted = true;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = '';
+  document.getElementById('appWrap').style.display = '';
+  document.getElementById('signout').style.display = '';
+  buildControls(); run();                             // bootstrap the dashboard (post-auth)
+}
+function showLogin(msg){
+  document.getElementById('login').style.display = 'flex';
+  if(msg) document.getElementById('loginErr').textContent = msg;
+  document.getElementById('loginUser').focus();
+}
+async function checkSession(){
+  if(!sb){ showLogin('Login is not configured yet — set SUPABASE_URL / SUPABASE_ANON_KEY in index.html.'); return; }
+  const { data } = await sb.auth.getSession();
+  if(data.session) startApp(); else showLogin();
+}
+async function doLogin(ev){
+  if(ev) ev.preventDefault();
+  const btn = document.getElementById('loginBtn');
+  const errEl = document.getElementById('loginErr');
+  errEl.textContent = '';
+  if(!sb){ errEl.textContent = 'Login is not configured yet.'; return; }
+  const u = document.getElementById('loginUser').value.trim().toLowerCase();
+  const pass = document.getElementById('loginPass').value;
+  if(!u || !pass){ errEl.textContent = 'Enter a username and password.'; return; }
+  const email = u.includes('@') ? u : `${u}@${LOGIN_DOMAIN}`;
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if(error){ errEl.textContent = 'Invalid username or password.'; return; }
+  startApp();
+}
+window.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('loginForm').addEventListener('submit', doLogin);
+  document.getElementById('signout').addEventListener('click', async ()=>{
+    if(sb) await sb.auth.signOut();
+    location.reload();
+  });
+  checkSession();
+});
+
 // ───────────────────────── Model constants (mirror Python) ─────────────────────────
 const G = 9.81, CRR_SPEED_FACTOR = 0.01, PANEL_TEMP_STC = 25.0;
 const WSC_SEGMENTS = [ // [distance_km, grade_%, altitude_m]
@@ -594,7 +693,8 @@ function renderTable(T){
 function mkRow(T,i,note,stop){ return {time:fmtTime(T.time[i]),d:T.dist[i],spd:T.speed[i],irr:T.irr[i],
   solarIn:T.irr[i]*CAR.panelArea,gr:T.grade[i],alt:T.alt[i],solar:T.solar[i],dem:T.demand[i],soc:T.soc[i]*100,note,_stop:stop}; }
 
-buildControls(); run();
+// Bootstrap (buildControls(); run();) is invoked by startApp() only after a successful
+// Supabase login — see the Authentication block at the top of this script.
 </script>
 </body>
 </html>
