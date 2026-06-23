@@ -266,7 +266,7 @@ function batteryBudget(soc,c,hoursToday,hoursTotal,target,scale,maxBat,wholeMaxB
     if(!hrs||hrs<=0) return 0;
     return Math.min(wholeMaxBat, scale*usable*1000/hrs);
   }
-  const usable=Math.max(0,(soc-0.70)*c.battKwh);
+  const usable=Math.max(0,(soc-0.30)*c.battKwh);
   if(hoursToday<=0) return 0;
   return Math.min(maxBat, usable*1000/hoursToday);
 }
@@ -281,7 +281,7 @@ function computeSpeed(solarW,soc,grade,alt,c,p,hoursToday,hoursTotal,target,scal
 
 // ───────────────────────── Simulator (mirror simulation/simulator.py) ─────────────────────────
 function simulate(c,p,scale){
-  const dtH=p.dt/60, batMin=c.battKwh*0.70, maxRegen=3000;
+  const dtH=p.dt/60, batMin=c.battKwh*0.30, maxRegen=3000;
   const totalDriveH=p.winStart!=null ? (p.winEnd-p.winStart)*p.days - p.numStops*p.stopMin/60 : 0;
   const stops=CONTROL_STOPS_KM.filter(s=>s<p.distance).slice(0,p.numStops);
   let batt=c.battKwh*c.initSoc, dist=0, nextStop=0, stopRem=0, driveH=0, finishT=Infinity, curStopName='';
@@ -421,7 +421,16 @@ const GOAL_SEEK_PARAMS = [
 ];
 const GS_DEFAULT_CHECKED = new Set(['Cd','A','mass']); // sensible starting subset
 function schemaBound(key){ for(const[,items]of PARAM_SCHEMA) for(const it of items) if(it[0]===key) return {min:it[2],max:it[3],step:it[4]}; return null; }
-let GS = { mode:'time', day:RACE.days, time:'14:00', avg:100, checked:new Set(GS_DEFAULT_CHECKED) };
+function gsImproveDir(key){ for(const[k,,d]of GOAL_SEEK_PARAMS) if(k===key) return d; return 'min'; }
+// Cost-down (de-optimization) params: [key, loss-category]. Each is RELAXED toward its
+// worse bound by an amount weighted by that category's share of total loss (severity of
+// contribution), trading the unspendable battery surplus for a cheaper-to-build car.
+// solar/aux/battery params are excluded — only the chassis/drivetrain losses drive cost.
+const COST_DOWN_PARAMS = [
+  ['Cd','drag'],['A','drag'],['mass','roll'],['Crr','roll'],
+  ['motorEff','drive'],['gearEff','drive'],['busV','elec'],['wireR','elec'],['battR','elec'],
+];
+let GS = { mode:'time', day:RACE.days, time:'14:00', avg:100, costSoc:30, checked:new Set(GS_DEFAULT_CHECKED) };
 const GS_DAY_MAX = 5;   // allow targeting up to Day 5 (winners finish on a 5th calendar day)
 
 function buildControls(){
@@ -510,23 +519,28 @@ function buildGoalSeek(root){
       <select id="gsMode">
         <option value="time" ${GS.mode==='time'?'selected':''}>Finish by day &amp; time</option>
         <option value="avg" ${GS.mode==='avg'?'selected':''}>Average speed</option>
+        <option value="cost" ${GS.mode==='cost'?'selected':''}>Cost-down (relax to deplete)</option>
       </select></div>
-    <div class="gsrow" id="gsTimeRow" style="${GS.mode==='avg'?'display:none':''}"><label>Finish by</label>
+    <div class="gsrow" id="gsTimeRow" style="${GS.mode!=='time'?'display:none':''}"><label>Finish by</label>
       <select id="gsDay">${dayOpts}</select>
       <input type="time" id="gsTime" value="${GS.time}" step="300"></div>
-    <div class="gsrow" id="gsAvgRow" style="${GS.mode==='time'?'display:none':''}"><label>Avg speed</label>
+    <div class="gsrow" id="gsAvgRow" style="${GS.mode!=='avg'?'display:none':''}"><label>Avg speed</label>
       <input type="number" id="gsAvg" value="${GS.avg}" min="${RACE.vmin}" max="180" step="1" style="width:70px"> km/h</div>
+    <div class="gsrow" id="gsCostRow" style="${GS.mode!=='cost'?'display:none':''}"><label>Deplete to</label>
+      <input type="number" id="gsCostSoc" value="${GS.costSoc}" min="30" max="95" step="1" style="width:70px"> % SoC</div>
     <div style="font-size:11px;color:var(--mut);margin-bottom:4px">Parameters Goal-Seek may tune (solar area &amp; battery stay at the regulation caps):</div>
     <div class="checklist">${checks}</div>
     <button class="primary" id="gsSolve">Solve</button>
     <div class="result" id="gsResult"></div>`;
   root.appendChild(g);
   g.querySelector('#gsMode').addEventListener('change',e=>{ GS.mode=e.target.value;
-    g.querySelector('#gsTimeRow').style.display = GS.mode==='avg'?'none':'';
-    g.querySelector('#gsAvgRow').style.display  = GS.mode==='time'?'none':''; });
+    g.querySelector('#gsTimeRow').style.display = GS.mode==='time'?'':'none';
+    g.querySelector('#gsAvgRow').style.display  = GS.mode==='avg'?'':'none';
+    g.querySelector('#gsCostRow').style.display = GS.mode==='cost'?'':'none'; });
   g.querySelector('#gsDay').addEventListener('change',e=>GS.day=parseInt(e.target.value));
   g.querySelector('#gsTime').addEventListener('change',e=>GS.time=e.target.value);
   g.querySelector('#gsAvg').addEventListener('change',e=>GS.avg=parseFloat(e.target.value));
+  g.querySelector('#gsCostSoc').addEventListener('change',e=>GS.costSoc=parseFloat(e.target.value));
   g.querySelectorAll('.gschk').forEach(cb=>cb.addEventListener('change',e=>{
     if(e.target.checked) GS.checked.add(e.target.dataset.key); else GS.checked.delete(e.target.dataset.key); }));
   g.querySelector('#gsSolve').addEventListener('click',goalSeek);
@@ -534,6 +548,7 @@ function buildGoalSeek(root){
 
 function goalSeek(){
   if(GS.mode==='avg'){ goalSeekAvg(); return; }
+  if(GS.mode==='cost'){ goalSeekCostDown(); return; }
   const resEl=document.getElementById('gsResult');
   const [hh,mm]=GS.time.split(':').map(Number);
   const targetT=(GS.day-1)+(hh+(mm||0)/60)/24;
@@ -670,6 +685,57 @@ function goalSeekAvg(){
     `(solar 6 m² &amp; battery left at the caps).`;
 }
 
+// Goal-Seek COST-DOWN: the optimized car is solar-saturated and finishes with a big battery
+// surplus it can't legally spend on speed. Instead of wasting it, deliberately DE-OPTIMIZE the
+// car (cheaper to build) so the extra loss burns the surplus down to a target SoC while still
+// finishing the route at the posted speed limits. Each loss param is relaxed toward its worse
+// bound by an amount weighted by that loss's share of total energy (drag ~83% relaxes most,
+// rolling ~8% less, drivetrain/electrical barely) — a single global knob is bisected to hit
+// the target SoC, bounded by the route still completing (the 30% discharge floor stops the car
+// driving below 30%, so that is the hard limit). solar 6 m² & battery stay at the regulation caps.
+function goalSeekCostDown(){
+  const out=document.getElementById('gsResult');
+  const targetSoc=Math.max(0.30,(GS.costSoc!=null?GS.costSoc:30)/100);   // can't plan below the 30% floor
+  PARAMS.fixedSpeed=null; PARAMS.speedScale=null; PARAMS.target=null;
+  const dyn={...PARAMS, target:null, fixedSpeed:null, speedScale:null};
+  const CAR0={...CAR};
+  const f0=simulate(CAR0,dyn,1.0);
+  if(!f0.completed){ out.className='result bad';
+    out.innerHTML=`✗ The current car doesn't finish at the posted limits (covers ${f0.dist.toFixed(0)} km) — there's no surplus to trade for cost. Tighten the spec first.`; return; }
+  if(f0.finalSoc<=targetSoc+0.005){ out.className='result ok';
+    out.innerHTML=`✓ Already finishes at <b>${(f0.finalSoc*100).toFixed(1)}% SoC</b> (≤ ${(targetSoc*100).toFixed(0)}% target) — no spare energy, so no relaxation possible.`; return; }
+  // worse bound per param, and category weight = that loss's share of total consumed energy
+  const worse={},cat={};
+  for(const[key,c]of COST_DOWN_PARAMS){ const b=schemaBound(key); if(!b) continue;
+    worse[key]=(gsImproveDir(key)==='min'?b.max:b.min); cat[key]=c; }
+  const C=f0.consumed||1;
+  const W={drag:f0.totals.drag/C, roll:f0.totals.roll/C, drive:f0.totals.drive/C,
+           elec:(f0.totals.wire+f0.totals.bint)/C};
+  const applyT=t=>{ const c={...CAR0};
+    for(const key in worse){ const f=Math.max(0,Math.min(1,t*(W[cat[key]]||0)));
+      c[key]=CAR0[key]+(worse[key]-CAR0[key])*f; } return c; };
+  // bisect the largest global knob t that still COMPLETES with SoC above target (more loss → lower SoC)
+  let lo=0,hi=6;
+  for(let i=0;i<40;i++){ const mid=(lo+hi)/2, r=simulate(applyT(mid),dyn,1.0);
+    if(r.completed && r.finalSoc>targetSoc) lo=mid; else hi=mid; }
+  const cont=applyT(lo), spec={...cont};
+  for(const key in worse) spec[key]=gsSnap(key,cont[key],gsImproveDir(key));   // snap toward LESS loss → keeps completion margin
+  let r=simulate(spec,dyn,1.0);
+  if(!r.completed){ Object.assign(spec,cont); r=simulate(spec,dyn,1.0); }      // snap broke completion → use continuous
+  const changes=Object.keys(worse).filter(k=>Math.abs(spec[k]-CAR0[k])>1e-9)
+    .map(k=>`${gsLabel(k)} ${fmtVal(k,CAR0[k])}→${fmtVal(k,spec[k])}`);
+  CAR={...spec}; PRESET_NAME='custom'; buildControls(); run();                 // push the cheaper spec onto the sliders
+  const wt=`drag ${(100*W.drag).toFixed(0)}% · rolling ${(100*W.roll).toFixed(0)}% · drivetrain ${(100*W.drive).toFixed(0)}% · electrical ${(100*W.elec).toFixed(0)}%`;
+  const missed=r.finalSoc>targetSoc+0.015;
+  out.className='result ok';
+  out.innerHTML=`✓ Cost-down spec — relaxed by loss-contribution weight (${wt}) to spend the surplus. `+
+    `Finishes <b>${fmtTime(r.finishT)}</b>, avg <b>${r.avgSpeed.toFixed(1)} km/h</b>, final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b> `+
+    `(from ${(f0.finalSoc*100).toFixed(1)}%, target ${(targetSoc*100).toFixed(0)}%).<br>`+
+    (changes.length?'<b>'+changes.join('; ')+'</b>':'no change needed')+
+    (missed?`<br><span style="color:#e0a030">⚠ Couldn't deplete to ${(targetSoc*100).toFixed(0)}% — relaxing further would stop the car finishing the route. ${(r.finalSoc*100).toFixed(1)}% is the lowest reachable while still finishing.</span>`:'')+
+    `<br><span style="color:var(--mut)">These are cheaper-to-build targets; the freed battery surplus is burned as extra loss. Solar 6 m² &amp; battery 3.056 kWh stay at the regulation caps (§2.4.2 / §2.5.2).</span>`;
+}
+
 let debTimer=null; function debounced(){ clearTimeout(debTimer); debTimer=setTimeout(run,120); }
 
 // ───────────────────────── Render ─────────────────────────
@@ -736,7 +802,7 @@ function run(){
       ${card(`Pace: ${ref.ev} ${ref.team}`, (ref.approx?'~':'')+ref.avg+' km/h')}
       ${card('Ref race time', refTime(ref.h))}
       ${card('Our finish', r.completed?fmtTime(r.finishT):'—', r.completed?'good':'bad')}
-      ${card('SoC at finish', (r.finalSoc*100).toFixed(1)+'%', r.finalSoc>0.70?'good':'bad')}`;
+      ${card('SoC at finish', (r.finalSoc*100).toFixed(1)+'%', r.finalSoc>0.30?'good':'bad')}`;
   }
 
   const baseX={ type:'linear', ticks:{ color:'#8b98a5', callback:v=>'D'+(Math.floor(v)+1), maxTicksLimit:8 }, grid:{color:'#222b34'} };
