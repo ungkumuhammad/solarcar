@@ -19,6 +19,7 @@
 - **Gated behind Supabase Auth login.** Username: `ungkumzulhilmi` (maps to `ungkumzulhilmi@solarcar.local`). Supabase project `npgioimtpwyeiwtwjfdu.supabase.co`; anon key embedded in `index.html` (safe to expose). Credentials/password managed via Supabase dashboard. To add/revoke members: Authentication → Users — no code change needed.
 - Single self-contained file: inline CSS + JS, **Chart.js + Supabase JS via CDN**. No build step.
 - It is a **faithful JS port of the Python model** — losses, solar/atmosphere, speed strategy (bisection), whole-race battery budget + client-side calibration, location-based control stops, per-territory speed limits, regen-to-battery, and the time-step loop.
+- **Battery discharge floor: 70% SoC** (team decision, 2026-06-23). Only the top 30% of battery is available for speed. `--target-soc` mode is unaffected.
 - **Timestep is 10 min** (dashboard `RACE.dt=10`, Python `race.time_step_min=10`, since 2026-06-24) — the speed profile is on a 10-minute basis. (Superseded the earlier 30-min default; all figures below are dt=10.)
 - **INVARIANT: the JS must stay in sync with the Python model.** Re-verified at dt=10: optimized legal **3022 km / 117.0 km/h / 96.7% SoC**; challenger **2984.1 km / 92.8 km/h / 13.0% SoC**; target-20% (limit left open) → **20.7% / 127.7 km/h**.
 - **Goal-seek now leaves the posted speed limit open** (200 km/h analysis ceiling) so it always returns a result; any driving above NT130/SA110 is **remarked** (distance over, peak, amount over) and flagged analysis-only (§3.31.6). Applies to both the target-SoC plan and the finish-time Goal-Seek, in CLI + dashboard. **Non-goal-seek runs are unchanged and stay race-legal** (report zero exceedance).
@@ -51,6 +52,16 @@
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-23 — Battery discharge floor raised to 70% SoC  ✅ MERGED TO MAIN
+#### Accomplished (branch `claude/sweet-faraday-5aotn9`)
+- **Battery discharge floor changed from 10% → 70% SoC** (team decision: retain 70% minimum charge).
+- Three locations updated in `index.html`: `batteryBudget()` planning floor, `simulate()` hard-stop guard (`batMin`), and the finish-SoC status card good/bad threshold.
+- Effect: simulator can only spend the top 30% of battery above the floor, so the car relies more heavily on solar for speed; morning demand (low solar) is correspondingly lower.
+#### Key Decisions
+- Floor of 70% SoC is the team's chosen operating minimum; `--target-soc` mode is unaffected (uses whatever target is passed in).
+#### Next steps
+- Evaluate whether the tighter usable window changes feasibility conclusions (especially for the baseline challenger).
 
 ### 2026-06-24 — Dynamic average-speed Goal-Seek + every-10-min speed table  ✅ MERGED TO MAIN (PR #10, 3cc5db0)
 #### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**)
