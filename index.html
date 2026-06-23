@@ -119,7 +119,7 @@
       <div id="dayTable"></div>
     </div>
     <div class="tablebox">
-      <h4 style="margin:0 0 8px;color:var(--mut);font-size:12px">Speed profile — one row per substantial speed change (+ day starts, control stops, finish)</h4>
+      <h4 style="margin:0 0 8px;color:var(--mut);font-size:12px">Speed profile — every 10-min step by default (toggle in Preset &amp; strategy); control stops named, parked-charging rows shown</h4>
       <div id="table"></div>
     </div>
   </main>
@@ -314,6 +314,9 @@ function simulate(c,p,scale){
         const pEff = p.openLimits ? {...p, vmaxStrategy:Math.max(p.vmaxStrategy,OPEN_CEILING)} : p;
         let spd = p.fixedSpeed!=null ? Math.min(p.fixedSpeed,vCap)
                   : computeSpeed(Psolar,soc,grade,alt,c,pEff,hToday,hTotal,p.target,scale,vCap);
+        // speedScale: scale the DYNAMIC profile up/down (keeps its solar/SoC/grade shape) so a
+        // target AVERAGE can be calibrated by bisection. Re-clip to [vmin, posted cap].
+        if(p.speedScale!=null && p.fixedSpeed==null) spd=Math.max(p.vmin, Math.min(vCap, spd*p.speedScale));
         const v=spd/3.6;
         const Pdrag=dragPower(v,c,rho), Proll=rollPower(v,c,grade), Pgrav=gravityPower(v,grade,c.mass);
         const balance=Pdrag+Proll+Pgrav, Pmech=Math.max(0,balance);
@@ -404,7 +407,7 @@ let PRESET_NAME = 'optimized';
 let PARAMS = { distance:RACE.distance, days:RACE.days, winStart:RACE.winStart, winEnd:RACE.winEnd,
   numStops:RACE.numStops, stopMin:RACE.stopMin, dt:RACE.dt, ambient:RACE.ambient, sunrise:RACE.sunrise,
   sunset:RACE.sunset, peak:RACE.peak, cloud:RACE.cloud, vmin:RACE.vmin, vmax:RACE.vmax, vmaxStrategy:RACE.vmax,
-  fixedSpeed:null, target:null, vmaxOverride:null, tableThr:12 };
+  fixedSpeed:null, speedScale:null, target:null, vmaxOverride:null, tableThr:12, tableEvery:true };
 
 // Goal-Seek adjustable (non-regulation) params: [key, label, improve-direction].
 // 'min' = lower is better, 'max' = higher is better. Bounds come from PARAM_SCHEMA.
@@ -436,7 +439,8 @@ function buildControls(){
       <input type="range" id="vmaxOv" min="110" max="180" step="5" value="150" disabled>
       <label><span>v-max override</span><span class="val" id="vmaxOvV">150</span></label></div>
     <div class="ctl"><label><span>Winning-team reference</span></label>
-      <select id="refTeam"><option value="">— none —</option>${refOptions()}</select></div>`;
+      <select id="refTeam"><option value="">— none —</option>${refOptions()}</select></div>
+    <div class="ctl"><label class="toggle"><input type="checkbox" id="tableEvery" ${PARAMS.tableEvery?'checked':''}> Speed table: every 10-min step</label></div>`;
   root.appendChild(g0);
   buildGoalSeek(root);
   for(const [title,items] of PARAM_SCHEMA){
@@ -457,18 +461,19 @@ function buildControls(){
   presetSel.value=PRESET_NAME;                         // restore selection after rebuild (was the dropdown bug)
   presetSel.addEventListener('change',e=>{
     if(e.target.value==='custom'){ PRESET_NAME='custom'; return; } // 'custom' is a state, not a preset
-    PARAMS.fixedSpeed=null;                            // clear any Goal-Seek pace-down lock
+    PARAMS.fixedSpeed=null; PARAMS.speedScale=null;                            // clear any Goal-Seek pace-down lock
     PRESET_NAME=e.target.value; CAR={...PRESETS[PRESET_NAME]}; buildControls(); run();
   });
   const refSel=document.getElementById('refTeam');
   refSel.value = REF_SEL==null ? '' : String(REF_SEL);   // restore selection after rebuild
   refSel.addEventListener('change',e=>{ REF_SEL = e.target.value===''?null:parseInt(e.target.value);
-    PARAMS.fixedSpeed=null;                            // pace mode is exclusive to the ref scenario
+    PARAMS.fixedSpeed=null; PARAMS.speedScale=null;                            // pace mode is exclusive to the ref scenario
     run(); });
+  document.getElementById('tableEvery').addEventListener('change',e=>{ PARAMS.tableEvery=e.target.checked; run(); });
   for(const [,items] of PARAM_SCHEMA) for(const [key] of items){
     document.getElementById('r_'+key).addEventListener('input',e=>{
       const v=parseFloat(e.target.value);
-      PARAMS.fixedSpeed=null;                          // editing any param releases the pace-down lock
+      PARAMS.fixedSpeed=null; PARAMS.speedScale=null;                          // editing any param releases the pace-down lock
       if(key in CAR){ CAR[key]=v;                       // hand-tuning a car param → mark preset Custom
         if(PRESET_NAME!=='custom'){ PRESET_NAME='custom'; presetSel.value='custom'; } }
       else PARAMS[key]=v;
@@ -533,7 +538,7 @@ function goalSeek(){
   const [hh,mm]=GS.time.split(':').map(Number);
   const targetT=(GS.day-1)+(hh+(mm||0)/60)/24;
   if(GS.day>PARAMS.days){ PARAMS.days=GS.day; buildControls(); }   // a Day-5 target makes it a 5-day race
-  PARAMS.fixedSpeed=null;                       // clear any prior pace-down lock before measuring
+  PARAMS.fixedSpeed=null; PARAMS.speedScale=null;                       // clear any prior pace-down lock before measuring
   // Realistic current finish: dynamic strategy at the posted (legal) speed limits.
   const dyn={...PARAMS, target:null, fixedSpeed:null};
   const f0=simulate(CAR,dyn,1.0);
@@ -602,51 +607,66 @@ function goalSeek(){
     (changes.length?changes.join('; '):'already met without changes')+remark;
 }
 
-// Goal-Seek by AVERAGE SPEED: drive at a constant requested pace, report the energy demand,
-// and — if that pace isn't sustainable — advise the car-parameter changes needed to hold it.
+// Goal-Seek by AVERAGE SPEED. Keeps the DYNAMIC speed strategy (speed varies with solar,
+// SoC, grade, air density), and bisection-calibrates a single `speedScale` so the resulting
+// race AVERAGE equals the requested value. Reports the energy demand; if the target can't be
+// met it advises the parameter changes needed (or flags the posted-cap ceiling).
+function demandStats(r){ let s=0,n=0,pk=0; for(let i=0;i<r.T.driving.length;i++) if(r.T.driving[i]){ s+=r.T.demand[i]; n++; pk=Math.max(pk,r.T.demand[i]); } return {avg:n?s/n:0,peak:pk}; }
 function goalSeekAvg(){
   const out=document.getElementById('gsResult');
   const targetAvg=GS.avg;
   if(!(targetAvg>=RACE.vmin)){ out.className='result bad'; out.textContent=`Enter an average speed ≥ ${RACE.vmin} km/h.`; return; }
-  PARAMS.fixedSpeed=targetAvg;                                   // drive at the requested constant pace
-  const need=daysToFinishAtFixed(CAR,PARAMS,targetAvg);
-  if(need>PARAMS.days){ PARAMS.days=need; }
-  buildControls(); run();                                        // reflect on the dashboard
-  const pp={...PARAMS, target:null, fixedSpeed:targetAvg};
-  const r=simulate(CAR,pp,1.0);
-  // energy demand summary over driving steps
-  let demSum=0,nDrv=0,peakDem=0;
-  for(let i=0;i<r.T.driving.length;i++) if(r.T.driving[i]){ demSum+=r.T.demand[i]; nDrv++; peakDem=Math.max(peakDem,r.T.demand[i]); }
-  const avgDem=nDrv?demSum/nDrv:0;
-  const capNote=(r.avgSpeed && targetAvg-r.avgSpeed>1) ? ` <span style="color:var(--mut)">(posted limits NT130/SA110 hold the actual average to ${r.avgSpeed.toFixed(1)} km/h)</span>` : '';
+  PARAMS.fixedSpeed=null; PARAMS.speedScale=null; PARAMS.target=null;                   // dynamic strategy, no fixed cruise / SoC plan
+  const CALDAYS=7;                                             // run long so every trial finishes the route
+  const base={...PARAMS, target:null, fixedSpeed:null, days:CALDAYS};
+  const avgAt=k=>simulate(CAR,{...base,speedScale:k},1.0);
+  // Bracket: slowest (vmin-bound) and fastest (posted-cap-bound) dynamic averages.
+  const rLo=avgAt(0.15), rHi=avgAt(3.0);
+  if(targetAvg>rHi.avgSpeed+0.3){          // can't average that fast at the posted caps
+    PARAMS.speedScale=3.0; buildControls(); run();
+    const d=demandStats(rHi); out.className='result bad';
+    out.innerHTML=`✗ <b>${targetAvg.toFixed(0)} km/h</b> isn't reachable at the posted caps (NT130/SA110) — the fastest dynamic average is `+
+      `<b>${rHi.avgSpeed.toFixed(1)} km/h</b>. (Raising it further needs the speed-limit override, not car changes.)`; return; }
+  if(targetAvg<rLo.avgSpeed-0.3){ out.className='result bad';
+    out.innerHTML=`✗ <b>${targetAvg.toFixed(0)} km/h</b> is below the slowest sustainable dynamic average (<b>${rLo.avgSpeed.toFixed(1)} km/h</b> at the ${RACE.vmin} km/h floor). Pick a higher average.`; return; }
+  // Bisection on speedScale → average.
+  let lo=0.15, hi=3.0;
+  for(let i=0;i<34;i++){ const mid=(lo+hi)/2; if(avgAt(mid).avgSpeed<targetAvg) lo=mid; else hi=mid; }
+  const k=(lo+hi)/2;
+  const r=simulate(CAR,{...base,speedScale:k},1.0);
+  PARAMS.speedScale=k;
+  PARAMS.days=Math.max(1,Math.min(CALDAYS,Math.floor(r.finishT)+1));   // trim to the actual finish day
+  buildControls(); run();
+  const d=demandStats(r);
   if(r.completed){
     out.className='result ok';
-    out.innerHTML=`✓ At a constant <b>${targetAvg.toFixed(0)} km/h</b> your current car finishes <b>${fmtTime(r.finishT)}</b>, `+
-      `final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b>. Energy demand while driving: avg <b>${avgDem.toFixed(0)} W</b> `+
-      `(peak ${peakDem.toFixed(0)} W), ${(r.energyIn/1000).toFixed(1)} kWh harvested. No parameter changes needed.${capNote}`;
+    out.innerHTML=`✓ Dynamic profile calibrated to average <b>${r.avgSpeed.toFixed(1)} km/h</b> (target ${targetAvg.toFixed(0)}). `+
+      `Speed varies with solar, SoC, grade &amp; air density; finishes <b>${fmtTime(r.finishT)}</b>, final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b>. `+
+      `Energy demand while driving: avg <b>${d.avg.toFixed(0)} W</b> (peak ${d.peak.toFixed(0)} W), ${(r.energyIn/1000).toFixed(1)} kWh harvested.`;
     return;
   }
-  // Not sustainable at the current spec → advise parameter improvements.
+  // Reached the average but battery can't carry the whole route → advise parameter changes.
   const keys=[...GS.checked];
   if(keys.length===0){ out.className='result bad';
-    out.innerHTML=`✗ At <b>${targetAvg.toFixed(0)} km/h</b> the battery runs out (covers ${r.dist.toFixed(0)} km, SoC hits the floor; avg demand ${avgDem.toFixed(0)} W). Tick parameters above for Goal-Seek to advise on.`; return; }
+    out.innerHTML=`✗ Averaging <b>${targetAvg.toFixed(0)} km/h</b> drains the battery (covers ${r.dist.toFixed(0)} km; avg demand ${d.avg.toFixed(0)} W). Tick parameters above for Goal-Seek to advise on.`; return; }
   const best={},dirs={}; for(const[key,,dir]of GOAL_SEEK_PARAMS){ const b=schemaBound(key); if(b){ best[key]=(dir==='min'?b.min:b.max); dirs[key]=dir; } }
   const CAR0={...CAR};
-  const applyK=k=>{ const c={...CAR0}; for(const key of keys) if(key in best) c[key]=CAR0[key]+(best[key]-CAR0[key])*k; return c; };
-  const okAt=k=>simulate(applyK(k),pp,1.0).completed;
+  const applyK=kk=>{ const c={...CAR0}; for(const key of keys) if(key in best) c[key]=CAR0[key]+(best[key]-CAR0[key])*kk; return c; };
+  const okAt=kk=>simulate(applyK(kk),{...base,speedScale:k},1.0).completed;
   if(!okAt(1)){ out.className='result bad';
-    out.innerHTML=`✗ Even with the chosen parameters maxed, <b>${targetAvg.toFixed(0)} km/h</b> isn't sustainable — enable more parameters or pick a lower average.`; return; }
-  let lo=0,hi=1; for(let i=0;i<28;i++){ const mid=(lo+hi)/2; if(okAt(mid)) hi=mid; else lo=mid; }
-  const cont=applyK(hi), spec={...cont};
+    out.innerHTML=`✗ Even with the chosen parameters maxed, averaging <b>${targetAvg.toFixed(0)} km/h</b> isn't sustainable — enable more parameters or pick a lower average.`; return; }
+  let plo=0,phi=1; for(let i=0;i<28;i++){ const mid=(plo+phi)/2; if(okAt(mid)) phi=mid; else plo=mid; }
+  const cont=applyK(phi), spec={...cont};
   for(const key of keys) spec[key]=gsSnap(key,cont[key],dirs[key]);
-  const changes=keys.filter(k=>Math.abs(spec[k]-CAR0[k])>1e-9).map(k=>`${gsLabel(k)} ${fmtVal(k,CAR0[k])}→${fmtVal(k,spec[k])}`);
+  const changes=keys.filter(kk=>Math.abs(spec[kk]-CAR0[kk])>1e-9).map(kk=>`${gsLabel(kk)} ${fmtVal(kk,CAR0[kk])}→${fmtVal(kk,spec[kk])}`);
   CAR={...spec}; PRESET_NAME='custom';
-  const need2=daysToFinishAtFixed(CAR,PARAMS,targetAvg); if(need2>PARAMS.days) PARAMS.days=need2;
+  const r2=simulate(CAR,{...base,speedScale:k},1.0);
+  PARAMS.days=Math.max(1,Math.min(CALDAYS,Math.floor(r2.finishT)+1));
   buildControls(); run();
-  const r2=simulate(CAR,{...PARAMS,target:null,fixedSpeed:targetAvg},1.0);
+  const d2=demandStats(r2);
   const o2=document.getElementById('gsResult'); o2.className='result ok';
-  o2.innerHTML=`✓ To sustain <b>${targetAvg.toFixed(0)} km/h</b> your car needs: <b>${changes.join('; ')||'no change'}</b> — `+
-    `then it finishes <b>${fmtTime(r2.finishT)}</b> at final SoC <b>${(r2.finalSoc*100).toFixed(1)}%</b> `+
+  o2.innerHTML=`✓ To average <b>${r2.avgSpeed.toFixed(1)} km/h</b> (target ${targetAvg.toFixed(0)}) your car needs: <b>${changes.join('; ')||'no change'}</b> — `+
+    `then it finishes <b>${fmtTime(r2.finishT)}</b>, final SoC <b>${(r2.finalSoc*100).toFixed(1)}%</b>, avg demand ${d2.avg.toFixed(0)} W `+
     `(solar 6 m² &amp; battery left at the caps).`;
 }
 
@@ -784,7 +804,7 @@ function renderDayTable(T){
 function stopName(d){ for(let j=0;j<CONTROL_STOPS_KM.length;j++) if(Math.abs(d-CONTROL_STOPS_KM[j])<2) return CONTROL_STOP_NAMES[j]; return ''; }
 
 function renderTable(T){
-  const thr=PARAMS.tableThr, rows=[]; let lastSpd=null,lastDay=null,chargeOpen=false;
+  const thr=PARAMS.tableThr, every=PARAMS.tableEvery, rows=[]; let lastSpd=null,lastDay=null,chargeOpen=false;
   const drvIdx=[]; for(let i=0;i<T.time.length;i++) if(T.driving[i]) drvIdx.push(i);
   const lastDrv=drvIdx[drvIdx.length-1];
   for(let i=0;i<T.time.length;i++){
@@ -792,15 +812,17 @@ function renderTable(T){
       if(rows.length&&rows[rows.length-1]._stop&&Math.abs(rows[rows.length-1].d-T.dist[i])<0.5) continue;
       const nm=T.stopName[i]||stopName(T.dist[i]); rows.push(mkRow(T,i,nm?'CONTROL STOP — '+nm:'CONTROL STOP',true)); continue; }
     if(!T.driving[i]){
-      // Parked but charging (dawn/dusk irradiance outside the 08:00–17:00 window, or a
-      // battery rest): speed is 0 but solar still charges. Show the START of each such block.
-      if(T.irr[i]>0){ if(!chargeOpen){ rows.push(mkRow(T,i,'charging (parked, speed 0)',false)); chargeOpen=true; } }
+      // Parked but charging (dawn/dusk irradiance outside the 08:00–17:00 window, or a battery
+      // rest): speed is 0 but solar still charges. Every-step mode shows each 10-min row;
+      // otherwise just the START of each charging block.
+      if(T.irr[i]>0){ if(every){ rows.push(mkRow(T,i,'charging (parked, speed 0)',false)); }
+        else if(!chargeOpen){ rows.push(mkRow(T,i,'charging (parked, speed 0)',false)); chargeOpen=true; } }
       else chargeOpen=false;
       continue;
     }
     chargeOpen=false;
     const first=T.day[i]!==lastDay, last=i===lastDrv, big=lastSpd==null||Math.abs(T.speed[i]-lastSpd)>=thr;
-    if(first||last||big){ rows.push(mkRow(T,i,first?'day start':(last?'finish':''),false)); lastSpd=T.speed[i]; }
+    if(every||first||last||big){ rows.push(mkRow(T,i,first?'day start':(last?'finish':''),false)); lastSpd=T.speed[i]; }
     lastDay=T.day[i];
   }
   const cols=['Time','Dist, km','Speed, km/h','Irr, W/m²','Solar-in, W','Solar-act, W','Grd, %','Elev, m','Demand, W','SoC, %','Event'];
