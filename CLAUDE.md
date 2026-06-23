@@ -361,6 +361,10 @@ python main.py --preset optimized_regulation --route wsc --target-soc 0.20
 python main.py --preset optimized_regulation --route wsc --v-max 150 --target-soc 0.20
 
 # Interactive HTML dashboard: open index.html in a browser (or host on GitHub Pages)
+# NOTE: the dashboard is gated by a Supabase Auth login. Users sign in with a USERNAME
+# (mapped internally to <username>@solarcar.local). Set SUPABASE_URL / SUPABASE_ANON_KEY
+# at the top of index.html's <script> and create users in the Supabase dashboard. The
+# password is verified server-side and is NOT stored in the page.
 
 # Change control stop assumptions
 python main.py --preset optimized_regulation --stops 3 --stop-min 20 --route wsc

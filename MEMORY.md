@@ -16,7 +16,8 @@
 - Housekeeping: old merged branches still exist on the remote (`claude/solar-car-losses-tivgr7`, `claude/solar-challenge-2027-plan-nsj4yl`, `claude/dynamic-speed-profile-viz-27tnlj`, `claude/goal-speed-limit-filter-n3pfiz`). The managed git proxy here **cannot delete remote branches**; remove them from the GitHub Branches UI if desired (purely cosmetic — all fully merged).
 
 **The dashboard (`index.html`) — current focus for refinement**
-- Single self-contained file: inline CSS + JS, **Chart.js via CDN**. No build step.
+- **Gated behind Supabase Auth login.** Username: `ungkumzulhilmi` (maps to `ungkumzulhilmi@solarcar.local`). Supabase project `npgioimtpwyeiwtwjfdu.supabase.co`; anon key embedded in `index.html` (safe to expose). Credentials/password managed via Supabase dashboard. To add/revoke members: Authentication → Users — no code change needed.
+- Single self-contained file: inline CSS + JS, **Chart.js + Supabase JS via CDN**. No build step.
 - It is a **faithful JS port of the Python model** — losses, solar/atmosphere, speed strategy (bisection), whole-race battery budget + client-side calibration, location-based control stops, per-territory speed limits, regen-to-battery, and the time-step loop.
 - **INVARIANT: the JS must stay in sync with the Python model.** Verified to match exactly: optimized legal 3022 km / 116.2 km/h / 100% SoC; **goal-seek target-20% → 20.2% / 128.6 km/h (limit left open)**; challenger 2931.7 / 93.1 / 16.4%.
 - **Goal-seek now leaves the posted speed limit open** (200 km/h analysis ceiling) so it always returns a result; any driving above NT130/SA110 is **remarked** (distance over, peak, amount over) and flagged analysis-only (§3.31.6). Applies to both the target-SoC plan and the finish-time Goal-Seek, in CLI + dashboard. **Non-goal-seek runs are unchanged and stay race-legal** (report zero exceedance).
@@ -44,6 +45,33 @@
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-23 — Supabase Auth login gate on the dashboard  ✅ MERGED TO MAIN
+#### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**)
+- Dashboard (`index.html`) is now **gated behind a Supabase Auth login**. The full simulator/charts
+  stay hidden until a valid session is established — no more public access.
+- **Login overlay** — full-screen card (dark-theme matched), Username + Password fields, error message
+  on bad credentials, **Sign out** button in the header (hidden until logged in).
+- **Session persists** across reloads via Supabase `localStorage`; Sign out clears it.
+- Username `ungkumzulhilmi` maps internally to `ungkumzulhilmi@solarcar.local`; password verified
+  server-side by Supabase (never stored in the page).
+- Supabase project `npgioimtpwyeiwtwjfdu.supabase.co`; anon public key embedded (safe to expose —
+  access enforced server-side by Supabase Auth).
+- Dashboard bootstrap (`buildControls(); run();`) now runs only inside `startApp()`, called after
+  a confirmed session (fixes Chart.js canvas-sizing inside hidden containers).
+
+#### Key Decisions / Findings
+- **Supabase Auth** chosen over a client-side hash gate — password never appears in source.
+- **Username login UX preserved** via `<username>@solarcar.local` email mapping convention.
+- To add more team members: create `<username>@solarcar.local` users in the Supabase dashboard
+  (Authentication → Users) — **no code change needed**.
+- Manage access (revoke, reset passwords) entirely from the Supabase dashboard.
+
+#### Next steps
+- Remaining simulator work: location-based irradiance, wind model, cloud/weather, sensitivity
+  analysis, race strategy optimizer (unchanged from previous sessions).
+
+---
 
 ### 2026-06-22 — Goal-seek leaves speed limit open + remarks on exceedance  ✅ MERGED TO MAIN + LIVE
 #### Accomplished (branch `claude/goal-speed-limit-filter-n3pfiz` → **merged to `main`** via `--no-ff`; Pages redeployed, change is **live** at the dashboard URL)
