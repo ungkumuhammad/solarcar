@@ -8,6 +8,21 @@ from typing import List, Optional
 # Official BWSC control-stop locations (cumulative km from Darwin), from data/route.csv
 # rows flagged control_stop=TRUE: Katherine .. Port Augusta.
 OFFICIAL_CONTROL_STOPS_KM = [310, 580, 850, 1120, 1400, 1670, 2040, 2290, 2550]
+# Checkpoint names parallel to OFFICIAL_CONTROL_STOPS_KM (from data/route.csv).
+OFFICIAL_CONTROL_STOP_NAMES = ["Katherine", "Daly Waters", "Tennant Creek", "Barrow Creek",
+                               "Alice Springs", "Kulgera", "Coober Pedy", "Glendambo", "Port Augusta"]
+
+
+def control_stop_name_at(distance_km: float, tol_km: float = 80.0) -> str:
+    """Nearest control-stop checkpoint name for a (post-checkpoint) distance, or ''.
+    The car records the halt at/just past the checkpoint km, so match the closest
+    checkpoint within tol_km (checkpoints are >=250 km apart, so this is unambiguous)."""
+    best, best_d = "", tol_km
+    for km, nm in zip(OFFICIAL_CONTROL_STOPS_KM, OFFICIAL_CONTROL_STOP_NAMES):
+        d = abs(distance_km - km)
+        if d <= best_d:
+            best, best_d = nm, d
+    return best
 
 # Posted speed limits along the route as (cumulative_km_from, limit_kmh) steps.
 # NT Stuart Highway is 130 km/h; the NT→SA border is ~20 km south of Kulgera

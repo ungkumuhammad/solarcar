@@ -1,6 +1,6 @@
 """Main race simulation engine with time-step integration.
 
-Each timestep (default 30 min):
+Each timestep (default 10 min):
 1. Compute irradiance → solar power
 2. Compute grade + altitude at current route position
 3. Ask SpeedStrategy for target speed
