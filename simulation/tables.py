@@ -9,6 +9,7 @@ import csv
 from typing import List, Dict
 
 from simulation.energy_budget import EnergyBudget
+from environment.route import control_stop_name_at
 
 
 TABLE_COLUMNS = [
@@ -54,7 +55,9 @@ def speed_profile_table(budget: EnergyBudget, threshold_kmh: float = 5.0) -> Lis
             if rows and rows[-1].get("_is_stop") and rows[-1]["Day"] == day \
                     and abs(rows[-1]["Dist_km"] - budget.distance_trace[i]) < 0.5:
                 continue
-            rows.append(_make_row(budget, i, delta=0.0, note="CONTROL STOP", is_stop=True))
+            nm = control_stop_name_at(budget.distance_trace[i])
+            note = f"CONTROL STOP — {nm}" if nm else "CONTROL STOP"
+            rows.append(_make_row(budget, i, delta=0.0, note=note, is_stop=True))
             continue
 
         if not driving:

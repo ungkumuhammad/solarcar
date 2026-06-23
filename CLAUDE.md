@@ -65,7 +65,7 @@ the battery fills to ~100% and cannot be drained (see strategy note below).
 | Race days | Effective drive total | Required avg speed | Feasible? (optimized, legal caps) |
 |---|---|---|---|
 | 3 days | 22.5 h | 134.3 km/h | **NO** — covers 2669.3 km (88.3%) |
-| **4 days** | **31.5 h** | **95.9 km/h** | **YES** — finishes 3022 km, avg 116.2 km/h, **100% SoC** |
+| **4 days** | **31.5 h** | **95.9 km/h** | **YES** — finishes 3022 km, avg 117.0 km/h, **96.7% SoC** |
 | 5 days | 40.5 h | 74.6 km/h | YES |
 
 **Race target: 4 days. With per-territory speed limits (NT 130 / SA 110) the optimized car
@@ -206,7 +206,7 @@ File: `losses/auxiliary.py` → `auxiliary_power()`
 | `optimized_regulation()` | 0.07 | 0.60 | 150 | 0.0012 | 26.0% | **6.0 (§2.4.2)** | **3.056 (§2.5.2)** |
 
 **`optimized_regulation()` is the correct target preset for the simulator.**
-Finishes 3022 km in **4 days** (24.5 h effective drive) at avg **123.3 km/h**, 73.3% battery remaining.
+Finishes 3022 km in **4 days** (31.5 h effective drive) at avg **117.0 km/h**, **96.7%** battery remaining (10-min timestep).
 
 ### Required Spec Changes (baseline → optimized_regulation)
 | Loss | Baseline | Required | Improvement |
@@ -251,14 +251,15 @@ speed = clip(speed, v_min=40, v_max=130)
 ## Key Simulation Results
 
 > Numbers below are with **location-based control stops** (9 × 30 min) **and per-territory
-> speed limits (NT 130 / SA 110)** + **regen-to-battery** (model updated 2026-06-21).
+> speed limits (NT 130 / SA 110)** + **regen-to-battery**, and a **10-min timestep**
+> (`time_step_min=10`, since 2026-06-24 — supersedes earlier 30-min figures).
 
 ### Baseline Challenger — 4-day race, WSC route (BWSC 2027 official specs)
-- Covers **2931.7 km** (97.0% of race) — **does NOT finish**
-- Driving time 31.5 h, Avg speed 93.1 km/h, Final SoC **16.4%**
+- Covers **2984.1 km** (98.7% of race) — **does NOT finish**
+- Driving time 31.5 h, Avg speed 92.8 km/h, Final SoC **13.0%**
 
 ### Optimized Regulation — 4-day race, WSC route ✓ (BWSC 2027 official specs)
-- **Finishes 3022 km**, Avg speed **116.2 km/h**, Final battery SoC **100%** (solar-saturated)
+- **Finishes 3022 km**, Avg speed **117.0 km/h**, Final battery SoC **96.7%** (near solar-saturated)
 - Loss: drag 83.1%, rolling 7.6%, aux 4.7%, drivetrain 2.4%
 - regen recovered ≈ **0 Wh** (wsc grades too gentle; recovery path verified on steeper data)
 
@@ -375,41 +376,47 @@ python main.py --cd 0.07 --mass 155 --route wsc
 
 ---
 
-## Verified Simulation Output (2026-06-21: location-based stops + posted speed limits NT 130/SA 110 + regen)
+## Verified Simulation Output (2026-06-24: **10-min timestep** + location-based stops + posted speed limits NT 130/SA 110 + regen)
 
 ### `python main.py --preset optimized_regulation --route wsc`
 ```
 Distance covered:  3022.0 km  ← FINISHES
-Average speed:      116.2 km/h
-Final battery SoC:  100.0%   (solar-saturated at legal speed caps)
-Energy in:         31504.0 Wh
-Loss breakdown:    drag 83.1%, rolling 7.6%, aux 4.7%, drivetrain 2.4%
+Average speed:      117.0 km/h
+Final battery SoC:  96.7%    (near solar-saturated at legal speed caps)
+Loss breakdown:    drag ~83%, rolling ~8%, aux ~5%, drivetrain ~2%
 ```
 
 ### `python main.py --preset optimized_regulation --route wsc --target-soc 0.20`
 ```
-[calibrate] target 20% not reachable within speed limits; floor is 95.7%
-Final battery SoC:  95.7%    ← cannot spend surplus at legal speeds
+[calibrate] scale=22.500 → final SoC 20.7% (speed limit left open for goal-seek)
+Average speed:      127.7 km/h   (reaches 20.7% by exceeding posted limits — analysis only)
 ```
 
 ### `python main.py --preset optimized_regulation --route wsc --v-max 150 --target-soc 0.20`
 ```
-Calibrated whole-race discharge scale = 15.0 → final SoC 20.2%
-Average speed:      128.6 km/h   (requires exceeding posted limits — analysis only)
+Calibrated whole-race discharge scale = 26.250 → final SoC 20.4%
+Average speed:      127.7 km/h   (requires exceeding posted limits — analysis only)
 ```
 
 ### `python main.py --route wsc`  (baseline challenger)
 ```
-Distance covered:  2931.7 km  ← DOES NOT FINISH (97.0%)
-Average speed:       93.1 km/h
-Final battery SoC:   16.4%
+Distance covered:  2984.1 km  ← DOES NOT FINISH (98.7%)
+Average speed:       92.8 km/h
+Final battery SoC:   13.0%
 ```
 
 ### Interactive dashboard (`index.html`)
 Self-contained in-browser port of the simulator (Chart.js via CDN). Sliders for every
 car/race/strategy parameter recompute live; deploys to GitHub Pages via
 `.github/workflows/pages.yml` (enable Settings → Pages → GitHub Actions once). The JS
-results match the Python model exactly (verified).
+results match the Python model exactly (verified). Gated by a Supabase Auth login.
+Dashboard-only strategy helpers (2026-06-23/24): **Goal-Seek** runs in two modes —
+**Finish by day & time** (paces the car down to a constant cruise for a later target, or
+tunes params to speed up for an earlier one; Day 5 selectable) and **Average speed** (drives
+a constant pace, reports the energy demand, and advises the car-parameter changes needed to
+sustain it). The **Winning-team** dropdown drives the whole sim at that team's pace. The
+speed-profile table runs on a **10-min basis**, labels each control stop by location
+(Katherine, Daly Waters, …), and shows parked-but-charging rows (speed 0, irradiance > 0).
 
 ### Visualization & export (added 2026-06-21)
 ```

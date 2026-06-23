@@ -17,7 +17,7 @@ class RaceConfig:
     num_control_stops: int = 9                # official BWSC stops Katherine..Port Augusta
     control_stop_duration_min: float = 30.0   # minutes per stop (§3.27.8)
 
-    time_step_min: float = 30.0     # simulation timestep in minutes
+    time_step_min: float = 10.0     # simulation timestep in minutes (10-min speed-profile basis)
     latitude: float = -23.7         # Stuart Highway midpoint (Australia)
     peak_irradiance: float = 1000.0 # W/m² clear sky peak
     sunrise_hour: float = 6.5
