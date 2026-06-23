@@ -455,14 +455,18 @@ function buildControls(){
   presetSel.value=PRESET_NAME;                         // restore selection after rebuild (was the dropdown bug)
   presetSel.addEventListener('change',e=>{
     if(e.target.value==='custom'){ PRESET_NAME='custom'; return; } // 'custom' is a state, not a preset
+    PARAMS.fixedSpeed=null;                            // clear any Goal-Seek pace-down lock
     PRESET_NAME=e.target.value; CAR={...PRESETS[PRESET_NAME]}; buildControls(); run();
   });
   const refSel=document.getElementById('refTeam');
   refSel.value = REF_SEL==null ? '' : String(REF_SEL);   // restore selection after rebuild
-  refSel.addEventListener('change',e=>{ REF_SEL = e.target.value===''?null:parseInt(e.target.value); run(); });
+  refSel.addEventListener('change',e=>{ REF_SEL = e.target.value===''?null:parseInt(e.target.value);
+    PARAMS.fixedSpeed=null;                            // pace mode is exclusive to the ref scenario
+    run(); });
   for(const [,items] of PARAM_SCHEMA) for(const [key] of items){
     document.getElementById('r_'+key).addEventListener('input',e=>{
       const v=parseFloat(e.target.value);
+      PARAMS.fixedSpeed=null;                          // editing any param releases the pace-down lock
       if(key in CAR){ CAR[key]=v;                       // hand-tuning a car param → mark preset Custom
         if(PRESET_NAME!=='custom'){ PRESET_NAME='custom'; presetSel.value='custom'; } }
       else PARAMS[key]=v;
@@ -511,25 +515,51 @@ function buildGoalSeek(root){
 
 function goalSeek(){
   const resEl=document.getElementById('gsResult');
-  const keys=[...GS.checked];
-  if(keys.length===0){ resEl.className='result bad'; resEl.textContent='Pick at least one parameter for Goal-Seek to tune.'; return; }
   const [hh,mm]=GS.time.split(':').map(Number);
   const targetT=(GS.day-1)+(hh+(mm||0)/60)/24;
+  PARAMS.fixedSpeed=null;                       // clear any prior pace-down lock before measuring
+  // Realistic current finish: dynamic strategy at the posted (legal) speed limits.
+  const dyn={...PARAMS, target:null, fixedSpeed:null};
+  const f0=simulate(CAR,dyn,1.0);
+
+  // ── PACE DOWN ── the car already finishes at/before the target → it is FASTER than needed.
+  // Slow it to a single constant cruise speed that lands on the target (slowest legal speed
+  // that still finishes by the target → lowest avg speed, maximum energy surplus). Posted
+  // limits apply throughout (pacing down is slower than the caps, so this stays race-legal).
+  if(f0.completed && f0.finishT<=targetT+1e-9){
+    const pp={...PARAMS, target:null};
+    const finAtV=v=>simulate(CAR,{...pp,fixedSpeed:v},1.0).finishT;
+    const vmin=PARAMS.vmin, vhi=PARAMS.vmaxStrategy;
+    let solved, slowestEarly=false;
+    if(finAtV(vmin)<=targetT+1e-9){ solved=vmin; slowestEarly=true; }   // even slowest cruise is early
+    else { let lo=vmin, hi=vhi;                                          // hi finishes by target, lo doesn't
+      for(let i=0;i<40;i++){ const mid=(lo+hi)/2; if(finAtV(mid)<=targetT+1e-9) hi=mid; else lo=mid; }
+      solved=hi; }
+    PARAMS.fixedSpeed=Math.min(vhi,Math.ceil(solved*10)/10);           // round UP so finish stays at/before target
+    run();                                                              // push the cruise onto the live run
+    const r=simulate(CAR,{...pp,fixedSpeed:PARAMS.fixedSpeed},1.0);
+    const surplus=(r.finalSoc-f0.finalSoc)*100;
+    const out=document.getElementById('gsResult'); out.className='result ok';
+    out.innerHTML=`✓ Paced down to a constant <b>${PARAMS.fixedSpeed.toFixed(1)} km/h</b> cruise to finish `+
+      `<b>${fmtTime(r.finishT)}</b> (target ${fmtTime(targetT)}). Avg speed <b>${r.avgSpeed.toFixed(1)} km/h</b>, `+
+      `final SoC <b>${(r.finalSoc*100).toFixed(1)}%</b> (${surplus>=0?'+':''}${surplus.toFixed(1)} pts vs the `+
+      `early-finish run at ${fmtTime(f0.finishT)}).`+
+      (slowestEarly?`<br><span style="color:var(--mut)">Note: even the slowest cruise (${vmin} km/h) still finishes before your target — pick an earlier target for a faster pace.</span>`:'');
+    return;
+  }
+
+  // ── SPEED UP ── the car finishes AFTER the target → tune the chosen parameters (existing).
+  const keys=[...GS.checked];
+  if(keys.length===0){ resEl.className='result bad'; resEl.textContent='Pick at least one parameter for Goal-Seek to tune.'; return; }
   // measure pure finish time (ignore target-SoC plan); leave the limit open so an earlier
   // finish isn't blocked by the posted cap — any exceedance is remarked below.
-  const mp={...PARAMS, target:null, openLimits:true};
+  const mp={...PARAMS, target:null, openLimits:true, fixedSpeed:null};
   const CAR0={...CAR};
   // best bound per tunable param (improving direction); regulation caps are not in GOAL_SEEK_PARAMS
   const best={},dirs={}; for(const[key,,dir]of GOAL_SEEK_PARAMS){ const b=schemaBound(key); if(b){ best[key]=(dir==='min'?b.min:b.max); dirs[key]=dir; } }
   const applyK=k=>{ const c={...CAR0}; for(const key of keys) if(key in best) c[key]=CAR0[key]+(best[key]-CAR0[key])*k; return c; };
   const finAt=k=>simulate(applyK(k),mp,1.0).finishT;
 
-  const f0=simulate(CAR0,mp,1.0);
-  if(f0.completed && f0.finishT<=targetT+1e-9){
-    resEl.className='result ok';
-    resEl.innerHTML=`✓ Current spec already finishes <b>${fmtTime(f0.finishT)}</b> — at/before your ${fmtTime(targetT)} target. No change needed.`;
-    return;
-  }
   const fEnd=simulate(applyK(1),mp,1.0);
   if(!(fEnd.completed && fEnd.finishT<=targetT+1e-9)){
     resEl.className='result bad';
@@ -564,15 +594,35 @@ function mkChart(id,cfg){ if(charts[id]) charts[id].destroy(); charts[id]=new Ch
 const COLORS={drag:'#d62728',roll:'#ff7f0e',grad:'#8c564b',drive:'#9467bd',aux:'#2ca02c',elec:'#1f77b4'};
 function fmtTime(t){ const d=Math.floor(t),h=(t-d)*24,hh=Math.floor(h),mm=Math.round((h-hh)*60); return `D${d+1} ${String(hh).padStart(2,'0')}:${String(mm===60?0:mm).padStart(2,'0')}`; }
 
+// Smallest race-day count at which a constant-speed run finishes the route (for the
+// winning-team scenario, whose pace may need more than the configured days).
+function daysToFinishAtFixed(c,p,vKmh){
+  for(let d=p.days; d<=7; d++){ if(simulate(c,{...p,days:d,fixedSpeed:vKmh,target:null},1.0).completed) return d; }
+  return 7;
+}
+
 function run(){
-  let r,scale=null,capLimited=false;
-  if(PARAMS.target!=null){ const cal=calibrate(CAR,PARAMS,PARAMS.target); r=cal.res; scale=cal.scale; capLimited=cal.capLimited; }
+  let r,scale=null,capLimited=false,refScenario=false,refDays=null;
+  if(REF_SEL!=null){
+    // Winning-team scenario: drive OUR currently-configured car at the team's average pace,
+    // auto-extending race days so it finishes. SoC/solar/elevation/power/finish all reflect it.
+    const ref=REF_TEAMS[REF_SEL];
+    refDays=daysToFinishAtFixed(CAR,PARAMS,ref.avg);
+    r=simulate(CAR,{...PARAMS, fixedSpeed:ref.avg, target:null, days:refDays},1.0); refScenario=true;
+  } else if(PARAMS.target!=null){ const cal=calibrate(CAR,PARAMS,PARAMS.target); r=cal.res; scale=cal.scale; capLimited=cal.capLimited; }
   else r=simulate(CAR,PARAMS,1.0);
   const T=r.T, x=T.time;
 
   // note
   const note=document.getElementById('note');
-  if(PARAMS.target!=null){
+  if(refScenario){
+    const ref=REF_TEAMS[REF_SEL];
+    const daysNote = refDays>PARAMS.days ? ` Race days auto-extended ${PARAMS.days}→<b>${refDays}</b> so it finishes.` : '';
+    note.style.display='block';
+    note.innerHTML=`🏁 <b>Scenario: our car driven at ${ref.ev} ${ref.team}'s pace</b> — constant `+
+      `<b>${(ref.approx?'~':'')+ref.avg} km/h</b> (their official race time ${refTime(ref.h)}).${daysNote}`+
+      (r.completed?'':' <span style="color:#e0a030">Does not finish even at the day cap.</span>');
+  } else if(PARAMS.target!=null){
     note.style.display='block';
     const exc=speedExceedance(T,SPEED_LIMITS);
     const remark = exc.distKm>0
@@ -596,12 +646,13 @@ function run(){
     ${card('Regen recovered', (r.totals.regen).toFixed(0)+' Wh')}`;
   if(REF_SEL!=null){
     const ref=REF_TEAMS[REF_SEL];
-    const dSpd=r.avgSpeed-ref.avg, dTime=r.driveH-ref.h;        // sim minus reference
+    // The sim now RUNS at the team's pace, so report their reference figures + how our car
+    // fares at that pace (when it crosses the line, what SoC it carries).
     document.getElementById('cards').innerHTML += `
-      ${card(`Ref: ${ref.ev} ${ref.team}`, (ref.approx?'~':'')+ref.avg+' km/h', dSpd>=0?'good':'bad')}
+      ${card(`Pace: ${ref.ev} ${ref.team}`, (ref.approx?'~':'')+ref.avg+' km/h')}
       ${card('Ref race time', refTime(ref.h))}
-      ${card('Sim vs ref speed', (dSpd>=0?'+':'')+dSpd.toFixed(1)+' km/h', dSpd>=0?'good':'bad')}
-      ${card('Sim vs ref time', (dTime>=0?'+':'')+dTime.toFixed(1)+' h', dTime<=0?'good':'bad')}`;
+      ${card('Our finish', r.completed?fmtTime(r.finishT):'—', r.completed?'good':'bad')}
+      ${card('SoC at finish', (r.finalSoc*100).toFixed(1)+'%', r.finalSoc>0.10?'good':'bad')}`;
   }
 
   const baseX={ type:'linear', ticks:{ color:'#8b98a5', callback:v=>'D'+(Math.floor(v)+1), maxTicksLimit:8 }, grid:{color:'#222b34'} };
