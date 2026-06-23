@@ -266,7 +266,7 @@ function batteryBudget(soc,c,hoursToday,hoursTotal,target,scale,maxBat,wholeMaxB
     if(!hrs||hrs<=0) return 0;
     return Math.min(wholeMaxBat, scale*usable*1000/hrs);
   }
-  const usable=Math.max(0,(soc-0.30)*c.battKwh);
+  const usable=Math.max(0,(soc-0.70)*c.battKwh);
   if(hoursToday<=0) return 0;
   return Math.min(maxBat, usable*1000/hoursToday);
 }
@@ -281,7 +281,7 @@ function computeSpeed(solarW,soc,grade,alt,c,p,hoursToday,hoursTotal,target,scal
 
 // ───────────────────────── Simulator (mirror simulation/simulator.py) ─────────────────────────
 function simulate(c,p,scale){
-  const dtH=p.dt/60, batMin=c.battKwh*0.30, maxRegen=3000;
+  const dtH=p.dt/60, batMin=c.battKwh*0.70, maxRegen=3000;
   const totalDriveH=p.winStart!=null ? (p.winEnd-p.winStart)*p.days - p.numStops*p.stopMin/60 : 0;
   const stops=CONTROL_STOPS_KM.filter(s=>s<p.distance).slice(0,p.numStops);
   let batt=c.battKwh*c.initSoc, dist=0, nextStop=0, stopRem=0, driveH=0, finishT=Infinity, curStopName='';
@@ -736,7 +736,7 @@ function run(){
       ${card(`Pace: ${ref.ev} ${ref.team}`, (ref.approx?'~':'')+ref.avg+' km/h')}
       ${card('Ref race time', refTime(ref.h))}
       ${card('Our finish', r.completed?fmtTime(r.finishT):'—', r.completed?'good':'bad')}
-      ${card('SoC at finish', (r.finalSoc*100).toFixed(1)+'%', r.finalSoc>0.30?'good':'bad')}`;
+      ${card('SoC at finish', (r.finalSoc*100).toFixed(1)+'%', r.finalSoc>0.70?'good':'bad')}`;
   }
 
   const baseX={ type:'linear', ticks:{ color:'#8b98a5', callback:v=>'D'+(Math.floor(v)+1), maxTicksLimit:8 }, grid:{color:'#222b34'} };
