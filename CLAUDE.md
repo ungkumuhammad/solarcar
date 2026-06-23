@@ -424,6 +424,11 @@ Requires `pip install -r requirements.txt` (matplotlib). Artifacts land in `outp
 
 ## Working Principles
 
+### 0. Merge to `main` after the user approves a session
+When the user approves the work in a session (e.g. "approved", "looks good", "go ahead"),
+**merge the working branch into `main`** (open a PR and merge it). This is a standing
+instruction — no need to ask each time. Still never push/merge without that approval.
+
 ### 1. Always wait for the next instruction
 Do not proceed to the next planning phase or make assumptions about what comes next. Complete the requested task, then **stop and wait**.
 
