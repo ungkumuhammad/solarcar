@@ -13,17 +13,21 @@
 - Repo `ungkumuhammad/solarcar` is **public**; **`main` contains everything** (all feature work merged).
 - Interactive dashboard is **LIVE**: **https://ungkumuhammad.github.io/solarcar/**
 - Auto-deploys via `.github/workflows/pages.yml` on any push that touches `index.html` (or the workflow). Pages source = GitHub Actions (already enabled).
-- Housekeeping: old merged branches still exist on the remote (`claude/solar-car-losses-tivgr7`, `claude/solar-challenge-2027-plan-nsj4yl`, `claude/dynamic-speed-profile-viz-27tnlj`, `claude/goal-speed-limit-filter-n3pfiz`). The managed git proxy here **cannot delete remote branches**; remove them from the GitHub Branches UI if desired (purely cosmetic — all fully merged).
+- Housekeeping: 7 merged `claude/*` branches still exist on the remote (all verified ancestors of `main`, safe to delete): `dashboard-authentication-e035ph`, `continuation-wcnnku`, `dynamic-speed-profile-viz-27tnlj`, `goal-speed-limit-filter-n3pfiz`, `solar-car-losses-tivgr7`, `solar-challenge-2027-plan-nsj4yl`, `youthful-dirac-fmkyjn`. **Neither the managed git proxy (`git push --delete` blocked) nor the GitHub MCP tools can delete remote branches/refs here** — remove them from the GitHub Branches UI (purely cosmetic).
 
 **The dashboard (`index.html`) — current focus for refinement**
 - **Gated behind Supabase Auth login.** Username: `ungkumzulhilmi` (maps to `ungkumzulhilmi@solarcar.local`). Supabase project `npgioimtpwyeiwtwjfdu.supabase.co`; anon key embedded in `index.html` (safe to expose). Credentials/password managed via Supabase dashboard. To add/revoke members: Authentication → Users — no code change needed.
 - Single self-contained file: inline CSS + JS, **Chart.js + Supabase JS via CDN**. No build step.
 - It is a **faithful JS port of the Python model** — losses, solar/atmosphere, speed strategy (bisection), whole-race battery budget + client-side calibration, location-based control stops, per-territory speed limits, regen-to-battery, and the time-step loop.
-- **INVARIANT: the JS must stay in sync with the Python model.** Verified to match exactly: optimized legal 3022 km / 116.2 km/h / 100% SoC; **goal-seek target-20% → 20.2% / 128.6 km/h (limit left open)**; challenger 2931.7 / 93.1 / 16.4%.
+- **Timestep is 10 min** (dashboard `RACE.dt=10`, Python `race.time_step_min=10`, since 2026-06-24) — the speed profile is on a 10-minute basis. (Superseded the earlier 30-min default; all figures below are dt=10.)
+- **INVARIANT: the JS must stay in sync with the Python model.** Re-verified at dt=10: optimized legal **3022 km / 117.0 km/h / 96.7% SoC**; challenger **2984.1 km / 92.8 km/h / 13.0% SoC**; target-20% (limit left open) → **20.7% / 127.7 km/h**.
 - **Goal-seek now leaves the posted speed limit open** (200 km/h analysis ceiling) so it always returns a result; any driving above NT130/SA110 is **remarked** (distance over, peak, amount over) and flagged analysis-only (§3.31.6). Applies to both the target-SoC plan and the finish-time Goal-Seek, in CLI + dashboard. **Non-goal-seek runs are unchanged and stay race-legal** (report zero exceedance).
-- **Goal-Seek is bidirectional (dashboard, 2026-06-23):** if the current spec already finishes **at/before** the target → **PACE DOWN** to a single constant cruise speed (slowest legal speed that still meets the target, `ceil` to 0.1 km/h so it stays ≤ target) → lower avg speed + energy surplus; sets `PARAMS.fixedSpeed` and `run()`s. If it finishes **after** the target → existing param speed-up path (open-limit + exceedance remark). The cruise lock clears on preset/slider/ref-team change. Uses the existing `p.fixedSpeed` lever in `simulate()` (mirrors Python `--speed`); physics untouched.
+- **Goal-Seek has TWO modes (dashboard, `gsMode` selector):**
+  - **Finish by day & time** — bidirectional: if the spec already finishes **at/before** the target → **PACE DOWN** to a single constant cruise (slowest legal speed still meeting the target, `ceil` to 0.1 km/h) → lower avg speed + energy surplus; if it finishes **after** → existing param speed-up (open-limit + exceedance remark). **Day 5 selectable** (`GS_DAY_MAX=5`); picking a day > `PARAMS.days` bumps `PARAMS.days` so it runs as a longer race. Cruise lock clears on preset/slider/ref-team change.
+  - **Average speed** (`goalSeekAvg()`, 2026-06-24) — drives a constant `fixedSpeed=targetAvg` (auto-extending days), reports the **energy demand** (avg/peak W while driving, kWh harvested) + finish + SoC; if unsustainable it bisection-**advises the car-parameter changes** (checked params) needed to hold that pace. Notes when posted caps hold the actual avg below the requested one.
+  - Both reuse the `p.fixedSpeed` lever in `simulate()` (mirrors Python `--speed`); physics untouched.
 - **Winning-team dropdown now DRIVES the sim (dashboard, 2026-06-23):** selecting a team runs OUR configured car at that team's avg pace (`fixedSpeed=ref.avg`), auto-extending race days via `daysToFinishAtFixed()` (cap 7; ~80–88 km/h → 5 days) so it finishes. Speed/SoC/solar/elevation/power/finish all reflect it; cards show team pace, ref race time, our finish, SoC at finish; `#note` shows the scenario + day auto-extend. Deselect → reverts to dynamic. (Replaces the old overlay-only behavior.)
-- Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns; control-stop rows named from `data/route.csv`).
+- Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns). **Speed-profile table (2026-06-24): runs on the 10-min basis, labels every control stop by location (Katherine, Daly Waters, … Port Augusta — name recorded in the JS trace `T.stopName`; Python via `control_stop_name_at()` in `environment/route.py`), and includes parked-but-charging rows (speed 0, irradiance > 0 at dawn 6:30–8:00 / dusk 17:00–18:30).**
 - **Sidebar and main panel scroll independently** (Preset & strategy / Goal-Seek stay visible while the main panel scrolls).
 
 **Model facts (BWSC 2027, simulator)**
@@ -34,7 +38,7 @@
 - Official specs: solar **6.0 m²** (§2.4.2), battery **3.056 kWh / 11 MJ** (§2.5.2). Presets: `challenger_class()` (baseline), `optimized_regulation()` (target).
 
 **Headline engineering finding**
-- At legal speed caps the `optimized_regulation` car is **solar-saturated** — at 110 km/h midday solar output exceeds demand, so the battery fills to ~100% and the surplus is **unspendable legally**. Target 20% SoC is unreachable *at legal caps* (floor 95.7%); spending the surplus requires exceeding posted limits. Goal-seek now does this automatically (leaves the limit open → target 20% reaches 20.2% at avg 128.6 km/h) and **remarks** that the plan is analysis-only, not race-legal. Design implication: the car is over-powered for legal speeds.
+- At legal speed caps the `optimized_regulation` car is **near solar-saturated** — at 110 km/h midday solar output exceeds demand, so the battery stays high (finishes ~96.7% SoC at dt=10) and the surplus is **unspendable legally**. Spending it down to a low target SoC requires exceeding posted limits. Goal-seek does this automatically (leaves the limit open → target 20% reaches **20.7% at avg 127.7 km/h**, dt=10) and **remarks** that the plan is analysis-only, not race-legal. Design implication: the car is over-powered for legal speeds.
 
 **File map**
 - `main.py` (CLI) · `models/` (car, race) · `losses/` (10 loss models, incl. `gradient.py` `gravity_power`) · `environment/` (solar_model, atmosphere, route + `load_control_stops_km`/`load_speed_limits_km`) · `simulation/` (simulator, speed_strategy, energy_budget, plots, tables) · `index.html` (dashboard) · `data/` (route.csv, irradiance/, elevation/) · `regulations/` · `CLAUDE.md` (project instructions) · `docs/session-memory.md` (archive).
@@ -47,6 +51,34 @@
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-24 — 10-min profile, avg-speed Goal-Seek, Day 5, control-stop names  ✅ MERGED TO MAIN (PR #9)
+#### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**, 044d44d)
+- **10-min timestep** everywhere: dashboard `RACE.dt=10`, Python `race.time_step_min=10`. Speed
+  profile is now on a 10-minute basis. Re-verified JS == Python: optimized **3022/117.0/96.7%**,
+  challenger **2984.1/92.8/13.0%** (supersedes the 30-min figures of 116.2/100% and 2931.7/93.1/16.4%).
+- **Speed-profile table**: every control stop labelled by location (Katherine … Port Augusta) — name
+  recorded in the trace (`T.stopName` in JS; `control_stop_name_at()` in `environment/route.py` for the
+  Python CLI table). Also shows **parked-but-charging rows** (speed 0, irradiance > 0 at dawn/dusk).
+- **Goal-Seek average-speed mode** (`goalSeekAvg()`): drive a constant requested pace, report energy
+  demand + finish + SoC, and advise the car-parameter changes needed to sustain it. Mode selector
+  (`gsMode`) toggles between this and the day+time mode.
+- **Day 5 selectable** in Goal-Seek (`GS_DAY_MAX=5`); a day > `PARAMS.days` extends the race.
+- Updated verified figures + dashboard notes in `CLAUDE.md`.
+#### Key Decisions / Findings
+- Answered the user's D5 question first: at Brunel's 86.6 km/h the sim **drives ~34.9 h** (= their race
+  time) but, rationed to the 9 h/day window minus 4.5 h of control stops (31.5 h over 4 days → 2728 km
+  by D4 17:00), the last 294 km spill into **D5 ~11:30**. Not a bug — calendar finish ≠ continuous
+  drive-time; realistic for BWSC.
+- dt=10 shifted headline numbers; **changed Python default too** to preserve the JS↔Python invariant
+  (both re-verified identical).
+- Branch cleanup: all 7 merged `claude/*` branches confirmed ancestors of `main` but **cannot be deleted
+  from this environment** (git proxy + GitHub MCP both lack ref deletion) — must use the Branches UI.
+#### Next steps
+- Location-based irradiance (wire `data/irradiance/`), then wind / cloud / sensitivity / optimizer.
+- Optional: sweep remaining secondary numbers in `CLAUDE.md`/`docs` to dt=10 (headline blocks done).
+
+---
 
 ### 2026-06-23 — Goal-Seek pace-down + winning-team scenario  ✅ MERGED TO MAIN (PR #7)
 #### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**, e31b2ae)
