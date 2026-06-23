@@ -21,6 +21,8 @@
 - It is a **faithful JS port of the Python model** — losses, solar/atmosphere, speed strategy (bisection), whole-race battery budget + client-side calibration, location-based control stops, per-territory speed limits, regen-to-battery, and the time-step loop.
 - **INVARIANT: the JS must stay in sync with the Python model.** Verified to match exactly: optimized legal 3022 km / 116.2 km/h / 100% SoC; **goal-seek target-20% → 20.2% / 128.6 km/h (limit left open)**; challenger 2931.7 / 93.1 / 16.4%.
 - **Goal-seek now leaves the posted speed limit open** (200 km/h analysis ceiling) so it always returns a result; any driving above NT130/SA110 is **remarked** (distance over, peak, amount over) and flagged analysis-only (§3.31.6). Applies to both the target-SoC plan and the finish-time Goal-Seek, in CLI + dashboard. **Non-goal-seek runs are unchanged and stay race-legal** (report zero exceedance).
+- **Goal-Seek is bidirectional (dashboard, 2026-06-23):** if the current spec already finishes **at/before** the target → **PACE DOWN** to a single constant cruise speed (slowest legal speed that still meets the target, `ceil` to 0.1 km/h so it stays ≤ target) → lower avg speed + energy surplus; sets `PARAMS.fixedSpeed` and `run()`s. If it finishes **after** the target → existing param speed-up path (open-limit + exceedance remark). The cruise lock clears on preset/slider/ref-team change. Uses the existing `p.fixedSpeed` lever in `simulate()` (mirrors Python `--speed`); physics untouched.
+- **Winning-team dropdown now DRIVES the sim (dashboard, 2026-06-23):** selecting a team runs OUR configured car at that team's avg pace (`fixedSpeed=ref.avg`), auto-extending race days via `daysToFinishAtFixed()` (cap 7; ~80–88 km/h → 5 days) so it finishes. Speed/SoC/solar/elevation/power/finish all reflect it; cards show team pace, ref race time, our finish, SoC at finish; `#note` shows the scenario + day auto-extend. Deselect → reverts to dynamic. (Replaces the old overlay-only behavior.)
 - Controls: preset (Challenger / Optimized / **Custom** — auto-set when sliders are hand-tuned) + sliders for all car/race params, target-SoC and v-max-override toggles, a **Display→speed-table threshold** slider, and a **Goal-Seek** panel (target finish day+time → tick which non-regulation params it may tune → bisects an improvement factor and writes the found spec onto the sliders; solar 6 m² & battery 3.056 kWh are hard-excluded; reports already-met / infeasible-earliest). Outputs: summary cards, 5 charts (speed w/ substantial-change markers, SoC, power-stack, elevation, irradiance), a **per-day summary table** (SoC start/end, dist, avg speed), and the speed-profile table (units in headers; Solar-in = irr×area and Solar-act = harvested-after-efficiency columns; control-stop rows named from `data/route.csv`).
 - **Sidebar and main panel scroll independently** (Preset & strategy / Goal-Seek stay visible while the main panel scrolls).
 
@@ -45,6 +47,32 @@
 ---
 
 ## Session Log (newest first)
+
+### 2026-06-23 — Goal-Seek pace-down + winning-team scenario  ✅ MERGED TO MAIN (PR #7)
+#### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**, e31b2ae)
+- **Goal-Seek bidirectional** (`goalSeek()`): later-than-achievable target now **paces the car
+  DOWN** to a constant cruise that lands exactly on the target (lower avg speed, energy surplus)
+  instead of "already finishes — no change". Earlier targets still use the param speed-up path.
+  Cruise lock (`PARAMS.fixedSpeed`) clears on preset/slider/ref-team change.
+- **Winning-team dropdown drives the sim** (`run()` + new `daysToFinishAtFixed()`): selecting a
+  team runs our car at their avg pace, auto-extending race days to finish; all charts/cards/finish
+  reflect the scenario. Replaces the old overlay-only behavior.
+- Both reuse the existing `p.fixedSpeed` lever — **`simulate()` physics unchanged** (mirrors Python
+  `--speed`). Posted-limit clipping + exceedance logic preserved.
+#### Key Decisions / Findings
+- Verified (DOM-stubbed node): baselines unchanged (optimized 3022/116.2/100%, challenger
+  2931.7/93.1/16.4%); pace-down to D4 14:00 → **106.1 km/h cruise, exact finish**; Brunel 86.6 →
+  **5 days**, finishes 3022 km (driving-time ≈ their 34.9 h).
+- Pace-down speed rounds **UP** (ceil 0.1 km/h) so finish stays ≤ target (rounding down overshot by
+  one 30-min timestep).
+- For the **optimized** car SoC surplus reads ~0 (already solar-saturated at 100%); the visible
+  benefit is the lower avg speed. Cars finishing <100% show the surplus directly.
+- **New standing workflow rule** (recorded in `CLAUDE.md` Principle #0): **merge to `main` after the
+  user approves a session** — no need to ask each time (still never merge without approval).
+#### Next steps
+- Location-based irradiance (wire `data/irradiance/`), then wind / cloud / sensitivity / optimizer.
+
+---
 
 ### 2026-06-23 — Supabase Auth login gate on the dashboard  ✅ MERGED TO MAIN
 #### Accomplished (branch `claude/dashboard-authentication-e035ph` → **merged to `main`**)
